@@ -5,7 +5,7 @@
 
 #include <stdio.h>
 #include <math.h>
-#include "main.h"
+//#include "main.h"
 #include "generator.h"
 
 //global vars
@@ -63,3 +63,12 @@ int main(void){
         HAL_Delay(500); // Wait 0.5s before checking again
     }
 }
+
+// RMS Voltage Reading
+
+
+
+//Peripheral init
+
+
+
