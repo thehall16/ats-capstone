@@ -18,12 +18,20 @@ void generator_startup_sequence(void){
 
     //Choke Sim
 
-
-
+    //turn on choke indicator LED light
+    wait(CHOKE_DELAY);
+    
     //Startup Sim
 
+    //turn off choke indicator
+    wait(START_DELAY);
 
     //Running
+
+    //turn on running light
+    wait(RUN_DELAY);
+    //switch indicator to generator power
+
 
 }
 

@@ -65,10 +65,39 @@ int main(void){
 }
 
 // RMS Voltage Reading
+float Read_Voltage_RMS(void)
+{
+    const uint16_t samples = 200;    // Number of ADC samples per cycle
+    uint32_t sum_sq = 0;
+    uint16_t adc_val = 0;
 
+    for (uint16_t i = 0; i < samples; i++)
+    {
+        HAL_ADC_Start(&hadc1);
+        HAL_ADC_PollForConversion(&hadc1, HAL_MAX_DELAY);
+        adc_val = HAL_ADC_GetValue(&hadc1);
+        HAL_ADC_Stop(&hadc1);
+
+        sum_sq += adc_val * adc_val;
+    }
+
+    // Compute RMS of ADC values
+    float adc_rms = sqrtf((float)sum_sq / samples);
+
+    // Convert ADC reading to voltage
+    // Assuming 3.3V reference and 12-bit ADC (0–4095)
+    float sensor_voltage = (adc_rms / 4095.0f) * 3.3f;
+
+    // Convert to AC RMS (calibration factor depends on ZMPT101B gain)
+    float voltage_rms = sensor_voltage * 100.0f;  // Example calibration factor
+
+    return voltage_rms;
+}
 
 
 //Peripheral init
 
+//GPIO_init for SSRs 
 
+//ADC_init for voltage monitoring
 
