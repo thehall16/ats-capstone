@@ -1,0 +1,48 @@
+#KiCad backup and autosave files
+
+*.kicad_prl
+*.kicad_sch-bak
+*.kicad_pcb-bak
+*-bak
+.autosave*
+*.tmp
+*~
+*.swp
+
+#KiCad recovery and history files
+
+*.kicad_sch-bak*
+*.kicad_pcb-bak*
+*.zip-bak*
+
+#Generated manufacturing outputs
+*.gbr
+*.gtl
+*.gts
+*.gto
+*.gbl
+*.gbs
+*.gbo
+*.drl
+*.dri
+*.pos
+*.rpt
+*.zip
+*.pdf
+
+#Simulation output files
+
+*.cir
+*.raw
+*.spice
+*.net
+
+#3d model cache
+
+*.stp
+*.step
+
+#OS and editor junk files
+
+.DS_Store
+Thumbs.db

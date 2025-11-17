@@ -1,0 +1,178 @@
+EESchema Schematic File Version 20211014
+EELAYER 25 0
+EELAYER END
+$Descr A4 11693 8268
+encoding utf-8
+Sheet 1 1
+Title "3.3V Buck Converter using MCP16331"
+Date "2025-11-05"
+Rev "1.0"
+Comp "University of Maine Capstone Project"
+Comment1 "12V UPS Input -> 3.3V 250mA Output"
+Comment2 "Designed by Aidan Hall"
+$EndDescr
+
+$Comp
+L Connector:Barrel_Jack J1
+U 1 1 00000001
+P 1000 1500
+F 0 "J1" H 1000 1650 50  0000 C CNN
+F 1 "Barrel Jack 5.5x2.1mm" H 1000 1400 50  0000 C CNN
+	1    1000 1500
+	1    0    0    -1
+$EndComp
+
+$Comp
+L Fuse:Polyfuse F1
+U 1 1 00000002
+P 1500 1500
+F 0 "F1" H 1500 1600 50  0000 C CNN
+F 1 "0.75A Polyfuse" H 1500 1400 50  0000 C CNN
+	1    1500 1500
+	1    0    0    -1
+$EndComp
+
+$Comp
+L Diode:SS14 D1
+U 1 1 00000003
+P 2000 1500
+F 0 "D1" H 2000 1600 50  0000 C CNN
+F 1 "SS14 Schottky" H 2000 1400 50  0000 C CNN
+	1    2000 1500
+	1    0    0    -1
+$EndComp
+
+$Comp
+L Device:C C1
+U 1 1 00000004
+P 2500 1500
+F 0 "C1" H 2500 1600 50  0000 C CNN
+F 1 "47uF 25V" H 2500 1400 50  0000 C CNN
+	1    2500 1500
+	1    0    0    -1
+$EndComp
+
+$Comp
+L Regulator_Switching:MCP16331 U1
+U 1 1 00000005
+P 3200 1500
+F 0 "U1" H 3200 1750 50  0000 C CNN
+F 1 "MCP16331" H 3200 1250 50  0000 C CNN
+	1    3200 1500
+	1    0    0    -1
+$EndComp
+
+$Comp
+L Device:L L1
+U 1 1 00000006
+P 3800 1500
+F 0 "L1" H 3800 1600 50  0000 C CNN
+F 1 "33uH Shielded" H 3800 1400 50  0000 C CNN
+	1    3800 1500
+	1    0    0    -1
+$EndComp
+
+$Comp
+L Device:C C2
+U 1 1 00000007
+P 4300 1500
+F 0 "C2" H 4300 1600 50  0000 C CNN
+F 1 "22uF 6.3V X7R" H 4300 1400 50  0000 C CNN
+	1    4300 1500
+	1    0    0    -1
+$EndComp
+
+$Comp
+L Device:C C3
+U 1 1 00000008
+P 4600 1500
+F 0 "C3" H 4600 1600 50  0000 C CNN
+F 1 "22uF 6.3V X7R" H 4600 1400 50  0000 C CNN
+	1    4600 1500
+	1    0    0    -1
+$EndComp
+
+$Comp
+L Device:R R1
+U 1 1 00000009
+P 4400 1100
+F 0 "R1" H 4400 1200 50  0000 C CNN
+F 1 "316k" H 4400 1000 50  0000 C CNN
+	1    4400 1100
+	1    0    0    -1
+$EndComp
+
+$Comp
+L Device:R R2
+U 1 1 00000010
+P 4400 800
+F 0 "R2" H 4400 900 50  0000 C CNN
+F 1 "100k" H 4400 700 50  0000 C CNN
+	1    4400 800
+	1    0    0    -1
+$EndComp
+
+$Comp
+L Device:C C4
+U 1 1 00000011
+P 4200 1100
+F 0 "C4" H 4200 1200 50  0000 C CNN
+F 1 "10pF" H 4200 1000 50  0000 C CNN
+	1    4200 1100
+	1    0    0    -1
+$EndComp
+
+$Comp
+L power:GND #PWR01
+U 1 1 00000012
+P 4600 600
+F 0 "#PWR01" H 4600 550 50  0001 C CNN
+F 1 "GND" H 4600 500 50  0000 C CNN
+	1    4600 600
+	1    0    0    -1
+$EndComp
+
+$Comp
+L power:+12V #PWR02
+U 1 1 00000013
+P 1000 1800
+F 0 "#PWR02" H 1000 1750 50  0001 C CNN
+F 1 "+12V" H 1000 1850 50  0000 C CNN
+	1    1000 1800
+	1    0    0    -1
+$EndComp
+
+$Comp
+L power:+3V3 #PWR03
+U 1 1 00000014
+P 4800 1800
+F 0 "#PWR03" H 4800 1750 50  0001 C CNN
+F 1 "+3V3" H 4800 1850 50  0000 C CNN
+	1    4800 1800
+	1    0    0    -1
+$EndComp
+
+Wire Wire Line
+1000 1500 1500 1500
+1500 1500 2000 1500
+2000 1500 2500 1500
+2500 1500 3200 1500
+3200 1500 3800 1500
+3800 1500 4300 1500
+4300 1500 4600 1500
+4600 1500 4800 1500
+Wire Wire Line
+4400 1100 4400 800
+Wire Wire Line
+4400 800 4600 600
+Wire Wire Line
+4400 1100 4200 1100
+Wire Wire Line
+4600 1500 4600 600
+Wire Wire Line
+4800 1500 4800 1800
+Wire Wire Line
+1000 1500 1000 1800
+Wire Wire Line
+3200 1500 4400 1100
+$EndSCHEMATC
