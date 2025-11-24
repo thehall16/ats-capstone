@@ -1,6 +1,6 @@
 #include "generator.h"
 #include <stdio.h>
-#include "stm32c0xx_hal.h" // HAL functions
+//#include "stm32c0xx_hal.h" // HAL functions
 
 //Pin assignments
 GPIO_TypeDef* GEN_PORT = GPIOA;      // GPIO port for generator pins
@@ -30,13 +30,13 @@ void generator_startup_sequence(void){
 
     //turn on running light
     wait(RUN_DELAY);
-    //switch indicator to generator power
+    
 
 
 }
 
 void generator_stop(void){
 
-    //stop
+    //stop indicator LED
 
 }
