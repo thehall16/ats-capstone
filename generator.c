@@ -1,6 +1,6 @@
 #include "generator.h"
 #include <stdio.h>
-//#include "stm32c0xx_hal.h" // HAL functions
+#include "stm32c0xx_hal.h" // HAL functions
 
 //Pin assignments
 GPIO_TypeDef* GEN_PORT = GPIOA;      // GPIO port for generator pins
