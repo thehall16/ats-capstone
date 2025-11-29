@@ -180,7 +180,6 @@ lastButtonState = currentButton;
 
 /* -------- RMS MEASUREMENT & THROTTLED PRINTING -------- */
 
-// hard-coded calibration factor
 
 
 // print only once every 2 seconds
