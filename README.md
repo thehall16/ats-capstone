@@ -1,8 +1,18 @@
 # ats-capstone
 
-11/11/2025
-still need to figure out what LCD to use.
+11/29/2025
+still need to figure out what LCD to use./ Display (maybe LCD maybe a Uart serial port connection)
 
-find out hiow to indicate what step of gen sim we are on LEDs or on the LCD
+Moved Firmware to Keil to easily use stm32cubemx for hal librarys and pin configuration.
 
-need to add the perhipheral inits, ex. GPIOs and ADC
+Getting accurate readings from ZMPT101B display currently via uart and puTTY terminal.
+
+Daughter board is in waiting on one componet to fully assemble
+
+Reworking main PCB may use nucleo board instead of standalone mcu due to time constraint
+aswell as code being formatted for the nucleo currently.
+
+May need a new 12v power supply the cheap ups scares me.
+
+We're gonna need a bigger boat (AC side housing for isolation).
+
