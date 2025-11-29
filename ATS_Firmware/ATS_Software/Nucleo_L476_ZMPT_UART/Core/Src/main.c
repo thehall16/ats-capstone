@@ -23,6 +23,7 @@
 /* USER CODE BEGIN Includes */
 #include <stdio.h>
 #include <stdarg.h>
+#include <math.h>
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -46,8 +47,16 @@ ADC_HandleTypeDef hadc1;
 UART_HandleTypeDef huart2;
 
 /* USER CODE BEGIN PV */
-uint8_t lastButtonState = GPIO_PIN_SET;  // assume not pressed at start
-uint8_t ledState        = 0;             // LED off
+uint8_t  lastButtonState = GPIO_PIN_SET;   // assume not pressed at start
+uint8_t  ledState        = 0;              // LED off
+
+// Hard-coded ADC DC offset (midpoint) for the ZMPT output.
+// based on inital no-AC measurement (approx. 3100).
+const uint16_t ADC_OFFSET = 3075;
+
+// From calibration: ~0.61 Vrms at module OUT when line is 120 Vrms.
+// 120 / 0.61 ˜ 196.7
+const float lineScaleFactor = 187.5f;      // converts module Vrms -> line Vrms
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -76,6 +85,35 @@ void uart_printf(const char *fmt, ...)
 
         HAL_UART_Transmit(&huart2, (uint8_t *)buffer, len, HAL_MAX_DELAY);
     }
+}
+
+// Measure AC RMS (module output) using hard-coded ADC_OFFSET
+float get_ac_rms(uint16_t samples)
+{
+    float vref = 3.3f;    // ADC reference voltage
+    float sumSq = 0.0f;
+
+    for (uint16_t i = 0; i < samples; i++)
+    {
+        if (HAL_ADC_Start(&hadc1) == HAL_OK)
+        {
+            if (HAL_ADC_PollForConversion(&hadc1, 10) == HAL_OK)
+            {
+                uint32_t raw = HAL_ADC_GetValue(&hadc1);
+                // remove DC offset using the hard-coded constant
+                int32_t ac_raw = (int32_t)raw - (int32_t)ADC_OFFSET;
+
+                // AC component in volts (can be positive or negative)
+                float v = (ac_raw * vref) / 4095.0f;
+
+                sumSq += v * v;
+            }
+            HAL_ADC_Stop(&hadc1);
+        }
+    }
+
+    float meanSq = sumSq / (float)samples;
+    return sqrtf(meanSq);   // RMS of AC part at module output, in volts
 }
 /* USER CODE END 0 */
 
@@ -112,7 +150,7 @@ int main(void)
   MX_ADC1_Init();
   /* USER CODE BEGIN 2 */
   uart_printf("System started.\r\n");
-  uart_printf("Button->LED + ADC + UART demo\r\n");
+  uart_printf("Button->LED + ZMPT + RMS + UART demo\r\n");
 
   // Grab initial button state for edge detection
   lastButtonState = HAL_GPIO_ReadPin(B1_GPIO_Port, B1_Pin);
@@ -142,24 +180,18 @@ int main(void)
 
     lastButtonState = currentButton;
 
-    /* -------- ADC READ + PRINT OVER UART -------- */
-    if (HAL_ADC_Start(&hadc1) == HAL_OK)
-    {
-        if (HAL_ADC_PollForConversion(&hadc1, 10) == HAL_OK)
-        {
-            uint32_t raw = HAL_ADC_GetValue(&hadc1);
+    /* -------- AC RMS MEASUREMENT + SCALING -------- */
+    // Take 1000 samples for a decent RMS estimate
+    float v_ac_rms  = get_ac_rms(1000);             // Vrms at ZMPT OUT
+    float line_vrms = v_ac_rms * lineScaleFactor;   // estimate of mains Vrms
 
-            // Convert raw ADC to voltage (assuming Vref = 3.3 V, 12-bit ADC)
-            float vref  = 3.3f;
-            float v_out = (raw * vref) / 4095.0f;
+    // Round to nearest whole number for display (this is what would show on LCD/7-seg)
+    int displayVolts = (int)(line_vrms + 0.5f);
 
-            uart_printf("ADC: %lu | V_out: %.3f V\r\n",
-                        (unsigned long)raw, v_out);
-        }
-        HAL_ADC_Stop(&hadc1);
-    }
+    uart_printf("Module Vrms: %.3f V | Line: %d V\r\n",
+                v_ac_rms, displayVolts);
 
-    HAL_Delay(100);  // 100 ms loop
+    HAL_Delay(500);  // 0.5 s between reports
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
@@ -269,7 +301,7 @@ static void MX_ADC1_Init(void)
   */
   sConfig.Channel = ADC_CHANNEL_5;                 // PA0 / IN5
   sConfig.Rank = ADC_REGULAR_RANK_1;
-  sConfig.SamplingTime = ADC_SAMPLETIME_2CYCLES_5; // can increase later if noisy
+  sConfig.SamplingTime = ADC_SAMPLETIME_2CYCLES_5; // you can increase if noisy
   sConfig.SingleDiff = ADC_SINGLE_ENDED;
   sConfig.OffsetNumber = ADC_OFFSET_NONE;
   sConfig.Offset = 0;
@@ -341,7 +373,7 @@ static void MX_GPIO_Init(void)
 
   /*Configure GPIO pin : B1_Pin */
   GPIO_InitStruct.Pin = B1_Pin;
-  GPIO_InitStruct.Mode = GPIO_MODE_IT_FALLING;
+  GPIO_InitStruct.Mode = GPIO_MODE_INPUT;      // we poll it, no interrupt needed
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   HAL_GPIO_Init(B1_GPIO_Port, &GPIO_InitStruct);
 
@@ -368,7 +400,6 @@ static void MX_GPIO_Init(void)
 void Error_Handler(void)
 {
   /* USER CODE BEGIN Error_Handler_Debug */
-  /* User can add his own implementation to report the HAL error return state */
   __disable_irq();
   while (1)
   {
@@ -386,8 +417,6 @@ void Error_Handler(void)
 void assert_failed(uint8_t *file, uint32_t line)
 {
   /* USER CODE BEGIN 6 */
-  /* User can add his own implementation to report the file name and line number,
-     ex: printf("Wrong parameters value: file %s on line %d\r\n", file, line) */
   /* USER CODE END 6 */
 }
 #endif /* USE_FULL_ASSERT */

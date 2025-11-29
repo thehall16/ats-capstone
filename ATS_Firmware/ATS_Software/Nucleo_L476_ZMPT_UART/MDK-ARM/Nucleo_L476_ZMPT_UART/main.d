@@ -33,4 +33,5 @@ nucleo_l476_zmpt_uart/main.o: ..\Core\Src\main.c ..\Core\Inc\main.h \
   ..\Drivers\STM32L4xx_HAL_Driver\Inc\stm32l4xx_hal_uart.h \
   ..\Drivers\STM32L4xx_HAL_Driver\Inc\stm32l4xx_hal_uart_ex.h \
   C:\Keil_v5\ARM\ARMCLANG\include\stdio.h \
-  C:\Keil_v5\ARM\ARMCLANG\include\stdarg.h
+  C:\Keil_v5\ARM\ARMCLANG\include\stdarg.h \
+  C:\Keil_v5\ARM\ARMCLANG\include\math.h
