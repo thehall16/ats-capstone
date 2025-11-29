@@ -56,7 +56,7 @@ const uint16_t ADC_OFFSET = 3080;
 
 // From calibration: ~0.61 Vrms at module OUT when line is 120 Vrms.
 // 120 / 0.61 ˜ 196.7
-const float lineScaleFactor = 187.5f;      // converts module Vrms -> line Vrms
+const float lineScaleFactor = 185.5f;      // converts module Vrms -> line Vrms
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -181,7 +181,7 @@ lastButtonState = currentButton;
 /* -------- RMS MEASUREMENT & THROTTLED PRINTING -------- */
 
 // hard-coded calibration factor
-const float lineScaleFactor = 187.5f;
+
 
 // print only once every 2 seconds
 static uint32_t lastPrint = 0;
