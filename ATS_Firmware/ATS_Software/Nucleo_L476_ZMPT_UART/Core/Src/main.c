@@ -52,7 +52,7 @@ uint8_t  ledState        = 0;              // LED off
 
 // Hard-coded ADC DC offset (midpoint) for the ZMPT output.
 // based on inital no-AC measurement (approx. 3100).
-const uint16_t ADC_OFFSET = 3075;
+const uint16_t ADC_OFFSET = 3080;
 
 // From calibration: ~0.61 Vrms at module OUT when line is 120 Vrms.
 // 120 / 0.61 ˜ 196.7
@@ -161,37 +161,49 @@ int main(void)
   while (1)
   {
     /* -------- BUTTON -> LED TOGGLE -------- */
-    uint8_t currentButton = HAL_GPIO_ReadPin(B1_GPIO_Port, B1_Pin);
+uint8_t currentButton = HAL_GPIO_ReadPin(B1_GPIO_Port, B1_Pin);
 
-    // On Nucleo, button is active LOW:
-    // - Pressed   = GPIO_PIN_RESET (0)
-    // - Released  = GPIO_PIN_SET   (1)
-    if (currentButton == GPIO_PIN_RESET && lastButtonState == GPIO_PIN_SET)
-    {
-        // Button just went from released -> pressed
-        ledState = !ledState;
+// Button is active LOW on the Nucleo board
+if (currentButton == GPIO_PIN_RESET && lastButtonState == GPIO_PIN_SET)
+{
+    ledState = !ledState;
 
-        HAL_GPIO_WritePin(LD2_GPIO_Port, LD2_Pin,
-                          ledState ? GPIO_PIN_SET : GPIO_PIN_RESET);
+    HAL_GPIO_WritePin(LD2_GPIO_Port, LD2_Pin,
+                      ledState ? GPIO_PIN_SET : GPIO_PIN_RESET);
 
-        uart_printf("Button pressed. LED is now %s\r\n",
-                    ledState ? "ON" : "OFF");
-    }
+    uart_printf("Button pressed. LED is now %s\r\n",
+                ledState ? "ON" : "OFF");
+}
 
-    lastButtonState = currentButton;
+lastButtonState = currentButton;
 
-    /* -------- AC RMS MEASUREMENT + SCALING -------- */
-    // Take 1000 samples for a decent RMS estimate
-    float v_ac_rms  = get_ac_rms(1000);             // Vrms at ZMPT OUT
-    float line_vrms = v_ac_rms * lineScaleFactor;   // estimate of mains Vrms
 
-    // Round to nearest whole number for display (this is what would show on LCD/7-seg)
+/* -------- RMS MEASUREMENT & THROTTLED PRINTING -------- */
+
+// hard-coded calibration factor
+const float lineScaleFactor = 187.5f;
+
+// print only once every 2 seconds
+static uint32_t lastPrint = 0;
+uint32_t now = HAL_GetTick();
+
+if (now - lastPrint >= 2000)    // 2000 ms = 2 seconds
+{
+    float v_ac_rms  = get_ac_rms(12000);     // module RMS
+    float line_vrms = v_ac_rms * lineScaleFactor;
+
+    // ignore tiny noise when no AC is present
+    if (line_vrms < 5.0f)
+        line_vrms = 0.0f;
+
     int displayVolts = (int)(line_vrms + 0.5f);
 
     uart_printf("Module Vrms: %.3f V | Line: %d V\r\n",
                 v_ac_rms, displayVolts);
 
-    HAL_Delay(500);  // 0.5 s between reports
+    lastPrint = now;
+}
+
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
