@@ -41,30 +41,26 @@
  * Demo_ButtonLed() is safe to run in all modes.
  */
 #define DEMO_VOLTAGE_TEST      0   // ZMPT + RMS + UART demo
-#define DEMO_RELAY_TEST        0   // Simple relay LED pattern demo
-#define DEMO_FAILOVER          1   // Voltage-driven MAIN/GEN failover demo
-#define DEMO_GENSIM            0   // RESERVED: future GenSim with status LEDs
-#define DEMO_FINAL_COMBINED    0   // Future final demo
+#define DEMO_RELAY_TEST        0   // Relay + GPIO-only demo (temp LEDs on RELAY_* pins)
+#define DEMO_FAILOVER          0   // Voltage-based automatic MAIN/GEN switching (relays)
+#define DEMO_GENSIM            1   // Generator simulator LED-only startup/shutdown demo
+#define DEMO_FINAL_COMBINED    0   // Future: full project demo
 
 // Hard-coded ADC DC offset (midpoint) for the ZMPT output.
+// Based on initial no-AC measurement (approx. 3080).
 const uint16_t ADC_OFFSET = 3080;
 
 // From calibration: ~0.61 Vrms at module OUT when line is 120 Vrms.
 // 120 / 0.61 ≈ 196.7  --> 185.5f more accurate after tuning
 const float lineScaleFactor = 185.5f;      // converts module Vrms -> line Vrms
 
-// Failover / mains behavior config
-// Wide window for deciding "mains is bad"
-#define MAINS_MIN_VRMS        108.0f
-#define MAINS_MAX_VRMS        132.0f
-
-// Tighter window for deciding "mains is good enough to come back"
-#define MAINS_RETURN_MIN_VRMS 117.0f
-#define MAINS_RETURN_MAX_VRMS 123.0f
-
-#define MAINS_BAD_TIME_MS      500    // must be bad for 0.5 s before leaving MAIN
-#define SWITCH_DELAY_MS       1000    // 1 second between staged switching steps
-#define MAINS_RETURN_TIME_MS  2000    // 2 seconds of good mains before switching back
+/* GenSim timing constants */
+#define GENSIM_STARTUP_S1_TIME_MS        1000   // 1 s S1 solid at startup
+#define GENSIM_STARTUP_CRANK_TIME_MS     3000   // 3 s S2 blinking at startup
+#define GENSIM_SHUT_S1_SOLID_TIME_MS     1000   // 1 s S1 solid at shutdown
+#define GENSIM_SHUT_S2_BLINK_TIME_MS     3000   // 3 s S2 blinking at shutdown
+#define GENSIM_DEMO_DELAY_MS             5000   // 5 s delay before startup / shutdown
+#define GENSIM_BLINK_PERIOD_MS            250   // 250 ms blink period
 
 /* USER CODE END PD */
 
@@ -97,9 +93,9 @@ static void MX_ADC1_Init(void);
 void Demo_ButtonLed(void);        // Blue button toggles LD2 + UART print
 void Demo_Voltage(void);          // ZMPT voltage measurement + UART print
 void Demo_RelayTest(void);        // Relay-only GPIO demo (temp LEDs on RELAY_* pins)
-void Demo_Failover(void);         // Voltage-driven MAIN/GEN failover using relays
-void Demo_GenSim(void);           // RESERVED: full generator simulator w/ LEDs
-void Demo_FinalCombined(void);    // Future final combined project demo
+void Demo_Failover(void);         // Voltage-based failover demo (relays + UART)
+void Demo_GenSim(void);           // Generator simulator LED-only demo
+void Demo_FinalCombined(void);    // Future: final combined project demo
 
 /* USER CODE END PFP */
 
@@ -108,20 +104,19 @@ void Demo_FinalCombined(void);    // Future final combined project demo
 
 void uart_printf(const char *fmt, ...)
 {
-    // Increased buffer size so large multi-line prints (ASCII box) fit.
-    char buffer[512];
+    char buffer[256];
     va_list args;
     va_start(args, fmt);
     int len = vsnprintf(buffer, sizeof(buffer), fmt, args);
     va_end(args);
 
-    if (len <= 0)
-        return;
+    if (len > 0)
+    {
+        if (len > (int)sizeof(buffer))
+            len = sizeof(buffer);
 
-    if (len > (int)sizeof(buffer))
-        len = sizeof(buffer);
-
-    HAL_UART_Transmit(&huart2, (uint8_t *)buffer, len, HAL_MAX_DELAY);
+        HAL_UART_Transmit(&huart2, (uint8_t *)buffer, len, HAL_MAX_DELAY);
+    }
 }
 
 // Measure AC RMS (module output) using hard-coded ADC_OFFSET
@@ -208,7 +203,7 @@ void Demo_Voltage(void)
 /*
  * Relay helper functions.
  * Use ONLY the RELAY_* pins here.
- * For bench testing, you connect LEDs + resistors from each RELAY_* pin → GND.
+ * For the relay demo you hang temporary LEDs + resistors from these pins to GND.
  */
 
 static void Relay_AllOff(void)
@@ -218,30 +213,30 @@ static void Relay_AllOff(void)
     HAL_GPIO_WritePin(RELAY_TRANSFER_GPIO_Port, RELAY_TRANSFER_Pin, GPIO_PIN_RESET);
 }
 
-static void Relay_MainOnly(void)
+static void Relay_MainOn(void)
 {
     HAL_GPIO_WritePin(RELAY_MAIN_GPIO_Port,     RELAY_MAIN_Pin,     GPIO_PIN_SET);
     HAL_GPIO_WritePin(RELAY_GEN_GPIO_Port,      RELAY_GEN_Pin,      GPIO_PIN_RESET);
     HAL_GPIO_WritePin(RELAY_TRANSFER_GPIO_Port, RELAY_TRANSFER_Pin, GPIO_PIN_RESET);
 }
 
-static void Relay_GenOnly(void)
+static void Relay_GenOn(void)
 {
     HAL_GPIO_WritePin(RELAY_MAIN_GPIO_Port,     RELAY_MAIN_Pin,     GPIO_PIN_RESET);
     HAL_GPIO_WritePin(RELAY_GEN_GPIO_Port,      RELAY_GEN_Pin,      GPIO_PIN_SET);
     HAL_GPIO_WritePin(RELAY_TRANSFER_GPIO_Port, RELAY_TRANSFER_Pin, GPIO_PIN_RESET);
 }
 
-static void Relay_GenWithTransfer(void)
+static void Relay_TransferOn(void)
 {
     HAL_GPIO_WritePin(RELAY_MAIN_GPIO_Port,     RELAY_MAIN_Pin,     GPIO_PIN_RESET);
-    HAL_GPIO_WritePin(RELAY_GEN_GPIO_Port,      RELAY_GEN_Pin,      GPIO_PIN_SET);
+    HAL_GPIO_WritePin(RELAY_GEN_GPIO_Port,      RELAY_GEN_Pin,      GPIO_PIN_RESET);
     HAL_GPIO_WritePin(RELAY_TRANSFER_GPIO_Port, RELAY_TRANSFER_Pin, GPIO_PIN_SET);
 }
 
 /*
- * Optional: status LED helpers (reserved for future GenSim / final demo).
- * These use LED_S1/S2/S3 but are NOT used in the relay-only or failover demos.
+ * Optional: status LED helpers (reserved for GenSim / final demo).
+ * These use LED_S1/S2/S3 and are NOT used in the simple relay demo.
  */
 
 static void Status_AllOff(void)
@@ -260,6 +255,13 @@ static void Status_Set(uint8_t s1, uint8_t s2, uint8_t s3)
 
 /*
  * Demo: Relay-only pattern.
+ * Cycles:
+ *   0: all OFF
+ *   1: MAIN ON
+ *   2: GEN ON
+ *   3: TRANSFER ON
+ *
+ * You connect test LEDs + resistors from each RELAY_* pin → GND.
  */
 void Demo_RelayTest(void)
 {
@@ -281,303 +283,381 @@ void Demo_RelayTest(void)
 
             case 1:
                 uart_printf("Relay demo: MAIN ON\r\n");
-                Relay_MainOnly();
+                Relay_MainOn();
                 break;
 
             case 2:
                 uart_printf("Relay demo: GEN ON\r\n");
-                Relay_GenOnly();
+                Relay_GenOn();
                 break;
 
             case 3:
-                uart_printf("Relay demo: TRANSFER ON (GEN+TRANSFER)\r\n");
-                Relay_GenWithTransfer();
+                uart_printf("Relay demo: TRANSFER ON\r\n");
+                Relay_TransferOn();
                 break;
         }
     }
 }
 
 /*
- * FAILOVER demo state machine + pretty UART status.
- * This is the voltage-driven MAIN/GEN switcher.
+ * Simple failover demo:
+ * - Reads line voltage via ZMPT.
+ * - Switches from MAIN to GEN when line is outside [108, 132] V RMS
+ *   for more than 500 ms.
+ * - Switches back to MAIN when line is inside [117, 123] V RMS
+ *   for more than 2000 ms.
+ * - Drives RELAY_MAIN / RELAY_GEN / RELAY_TRANSFER accordingly.
  */
-
-typedef enum {
-    FAILOVER_ON_MAIN = 0,               // MAIN on, others off
-    FAILOVER_SWITCH_TO_GEN_ALL_OFF,     // all off for 1s
-    FAILOVER_SWITCH_TO_GEN_GEN_ONLY,    // GEN on alone for 1s
-    FAILOVER_ON_GEN,                    // GEN+TRANSFER on
-    FAILOVER_SWITCH_TO_MAIN_GEN_OFF,    // GEN off, TRANSFER still on, delay
-    FAILOVER_SWITCH_TO_MAIN_TRANSFER_OFF, // TRANSFER off (all off), delay
-    FAILOVER_SWITCH_TO_MAIN_MAIN_ON     // MAIN on, then back to ON_MAIN
-} FailoverState;
-
-static const char* Failover_StateName(FailoverState s)
-{
-    switch (s)
-    {
-        case FAILOVER_ON_MAIN:                 return "ON_MAIN";
-        case FAILOVER_SWITCH_TO_GEN_ALL_OFF:   return "SW_TO_GEN_ALL_OFF";
-        case FAILOVER_SWITCH_TO_GEN_GEN_ONLY:  return "SW_TO_GEN_GEN_ONLY";
-        case FAILOVER_ON_GEN:                  return "ON_GEN";
-        case FAILOVER_SWITCH_TO_MAIN_GEN_OFF:  return "SW_TO_MAIN_GEN_OFF";
-        case FAILOVER_SWITCH_TO_MAIN_TRANSFER_OFF: return "SW_TO_MAIN_XFER_OFF";
-        case FAILOVER_SWITCH_TO_MAIN_MAIN_ON:  return "SW_TO_MAIN_MAIN_ON";
-        default:                               return "UNKNOWN";
-    }
-}
-
-static void Failover_PrintStatus(FailoverState state, float vrms)
-{
-    uint8_t mainOn     = (HAL_GPIO_ReadPin(RELAY_MAIN_GPIO_Port,     RELAY_MAIN_Pin)     == GPIO_PIN_SET);
-    uint8_t genOn      = (HAL_GPIO_ReadPin(RELAY_GEN_GPIO_Port,      RELAY_GEN_Pin)      == GPIO_PIN_SET);
-    uint8_t transferOn = (HAL_GPIO_ReadPin(RELAY_TRANSFER_GPIO_Port, RELAY_TRANSFER_Pin) == GPIO_PIN_SET);
-
-    const char* source = "NONE";
-
-    if (mainOn && !transferOn)
-    {
-        source = "MAIN";
-    }
-    else if (genOn && transferOn)
-    {
-        source = "GEN";
-    }
-
-    uart_printf(
-        "\r\n"
-        "+-------------------------------------------+\r\n"
-        "|        AUTO SWITCH DEMO: STATUS           |\r\n"
-        "+-------------------------------------------+\r\n"
-        "| Line Voltage: %6.1f V RMS                 |\r\n"
-        "| State       : %-27s|\r\n"
-        "| MAIN Relay  : %s\r\n"
-        "| GEN Relay   : %s\r\n"
-        "| TRANSFER    : %s\r\n"
-        "| Source      : %s\r\n"
-        "+-------------------------------------------+\r\n",
-        vrms,
-        Failover_StateName(state),
-        mainOn     ? "ON " : "OFF",
-        genOn      ? "ON " : "OFF",
-        transferOn ? "ON " : "OFF",
-        source
-    );
-}
-
-/*
- * Demo_Failover:
- *
- * Combined voltage + relay demo.
- *
- * States:
- *  - ON_MAIN:
- *      MAIN ON, others OFF.
- *      If Vrms is outside [108..132] for 500 ms, start switch to GEN.
- *
- *  - SWITCH_TO_GEN_ALL_OFF:
- *      All relays OFF for 1 second.
- *
- *  - SWITCH_TO_GEN_GEN_ONLY:
- *      GEN ON alone for 1 second (sim: generator spin-up), TRANSFER OFF.
- *
- *  - ON_GEN:
- *      GEN+TRANSFER ON (load on generator).
- *      When Vrms is in [117..123] for 2 seconds, start switch back to MAIN.
- *
- *  - SWITCH_TO_MAIN_GEN_OFF:
- *      GEN OFF, TRANSFER still ON for 1 second (your requested sequence).
- *
- *  - SWITCH_TO_MAIN_TRANSFER_OFF:
- *      TRANSFER OFF (all OFF) for 1 second.
- *
- *  - SWITCH_TO_MAIN_MAIN_ON:
- *      MAIN ON, others OFF, then return to ON_MAIN.
- */
-
 void Demo_Failover(void)
 {
-    static FailoverState state = FAILOVER_ON_MAIN;
-    static uint32_t lastMeasureTick   = 0;
-    static uint32_t lastPrintTick     = 0;
-    static float    lastLineVrms      = 0.0f;
-    static uint8_t  haveValidVoltage  = 0;
+    typedef enum {
+        SRC_MAIN = 0,
+        SRC_GEN  = 1
+    } SourceState;
 
-    static uint32_t switchStartTick    = 0;  // for staged switching
-    static uint32_t mainsGoodStartTick = 0;  // for 2-second good mains timing
-    static uint32_t mainsBadStartTick  = 0;  // for 0.5-second bad mains timing
+    static SourceState src = SRC_MAIN;
+    static uint32_t badStartTick  = 0;
+    static uint32_t goodStartTick = 0;
+    static uint32_t lastPrint     = 0;
 
     uint32_t now = HAL_GetTick();
 
-    // --- 1) Voltage measurement (every 500 ms) ---
-    if (now - lastMeasureTick >= 500)
+    // Measure voltage every call (could be throttled if needed)
+    float v_ac_rms  = get_ac_rms(4000);
+    float line_vrms = v_ac_rms * lineScaleFactor;
+    if (line_vrms < 5.0f)
+        line_vrms = 0.0f;
+
+    int mainOn     = 0;
+    int genOn      = 0;
+    int transferOn = 0;
+
+    // MAIN vs GEN logic
+    if (src == SRC_MAIN)
     {
-        lastMeasureTick = now;
-
-        float v_ac_rms  = get_ac_rms(4000);      // module RMS
-        float line_vrms = v_ac_rms * lineScaleFactor;
-
-        if (line_vrms < 5.0f)    // ignore noise, treat as 0
-            line_vrms = 0.0f;
-
-        lastLineVrms = line_vrms;
-
-        if (lastLineVrms > 5.0f)
+        // MAIN considered "bad" if out of [108,132]
+        if (line_vrms < 108.0f || line_vrms > 132.0f)
         {
-            haveValidVoltage = 1;   // we've seen real mains at least once
+            if (badStartTick == 0)
+                badStartTick = now;
+            if (now - badStartTick >= 500) // 0.5 s bad
+            {
+                uart_printf("Failover: MAIN voltage out of range (%.1f V). Switching to GEN.\r\n",
+                            line_vrms);
+                // GEN + TRANSFER ON
+                src = SRC_GEN;
+                badStartTick  = 0;
+                goodStartTick = 0;
+            }
+        }
+        else
+        {
+            badStartTick = 0;
+        }
+    }
+    else // SRC_GEN
+    {
+        // MAIN considered "good" if within [117,123] for at least 2 seconds
+        if (line_vrms >= 117.0f && line_vrms <= 123.0f)
+        {
+            if (goodStartTick == 0)
+                goodStartTick = now;
+            if (now - goodStartTick >= 2000) // 2 s good
+            {
+                uart_printf("Failover: MAIN voltage stable (%.1f V). Switching back to MAIN.\r\n",
+                            line_vrms);
+                src = SRC_MAIN;
+                badStartTick  = 0;
+                goodStartTick = 0;
+            }
+        }
+        else
+        {
+            goodStartTick = 0;
         }
     }
 
-    // --- 2) Slow, readable UART printing (every 2000 ms) ---
-    if (now - lastPrintTick >= 2000)
+    // Drive relays based on chosen source
+    if (src == SRC_MAIN)
     {
-        lastPrintTick = now;
-        Failover_PrintStatus(state, lastLineVrms);
+        mainOn     = 1;
+        genOn      = 0;
+        transferOn = 0;
+        Relay_MainOn();
+    }
+    else
+    {
+        mainOn     = 0;
+        genOn      = 1;
+        transferOn = 1;
+        Relay_GenOn();
+        Relay_TransferOn();
     }
 
-    // Until we've seen some non-zero mains, don't bail off MAIN
-    uint8_t mainsInWideRange = 1;
-    uint8_t mainsInReturnRange = 0;
-
-    if (haveValidVoltage)
+    // Pretty status print every 1s
+    if (now - lastPrint >= 1000)
     {
-        mainsInWideRange =
-            (lastLineVrms >= MAINS_MIN_VRMS) &&
-            (lastLineVrms <= MAINS_MAX_VRMS);
+        lastPrint = now;
 
-        mainsInReturnRange =
-            (lastLineVrms >= MAINS_RETURN_MIN_VRMS) &&
-            (lastLineVrms <= MAINS_RETURN_MAX_VRMS);
-    }
-
-    // --- 3) State machine for relays ---
-    switch (state)
-    {
-        case FAILOVER_ON_MAIN:
-            // MAIN ON, others OFF
-            Relay_MainOnly();
-
-            mainsGoodStartTick = 0;
-
-            if (haveValidVoltage && !mainsInWideRange)
-            {
-                if (mainsBadStartTick == 0)
-                {
-                    mainsBadStartTick = now;  // start timing bad mains
-                }
-                else if (now - mainsBadStartTick >= MAINS_BAD_TIME_MS)
-                {
-                    uart_printf("Failover: MAIN voltage out of range (%.1f V for %lu ms). Switching to GEN.\r\n",
-                                lastLineVrms, (unsigned long)(now - mainsBadStartTick));
-
-                    Relay_AllOff();
-                    switchStartTick   = now;
-                    mainsBadStartTick = 0;
-                    state = FAILOVER_SWITCH_TO_GEN_ALL_OFF;
-                }
-            }
-            else
-            {
-                mainsBadStartTick = 0;
-            }
-            break;
-
-        case FAILOVER_SWITCH_TO_GEN_ALL_OFF:
-            // All relays OFF for SWITCH_DELAY_MS
-            Relay_AllOff();
-            if (now - switchStartTick >= SWITCH_DELAY_MS)
-            {
-                // Turn GEN ON only
-                Relay_GenOnly();
-                switchStartTick = now;
-                uart_printf("Failover: GEN ON (TRANSFER still OFF).\r\n");
-                state = FAILOVER_SWITCH_TO_GEN_GEN_ONLY;
-            }
-            break;
-
-        case FAILOVER_SWITCH_TO_GEN_GEN_ONLY:
-            // GEN ON alone for SWITCH_DELAY_MS before we bring in TRANSFER
-            Relay_GenOnly();
-            if (now - switchStartTick >= SWITCH_DELAY_MS)
-            {
-                Relay_GenWithTransfer();
-                uart_printf("Failover: GEN & TRANSFER ON (load on generator).\r\n");
-                state = FAILOVER_ON_GEN;
-            }
-            break;
-
-        case FAILOVER_ON_GEN:
-            // GEN + TRANSFER ON, MAIN OFF
-            Relay_GenWithTransfer();
-
-            if (haveValidVoltage && mainsInReturnRange)
-            {
-                if (mainsGoodStartTick == 0)
-                {
-                    mainsGoodStartTick = now;  // start timing
-                }
-                else if (now - mainsGoodStartTick >= MAINS_RETURN_TIME_MS)
-                {
-                    uart_printf("Failover: MAIN voltage stable (%.1f V). Switching back to MAIN.\r\n",
-                                lastLineVrms);
-
-                    switchStartTick    = now;
-                    mainsGoodStartTick = 0;
-                    state = FAILOVER_SWITCH_TO_MAIN_GEN_OFF;
-                }
-            }
-            else
-            {
-                mainsGoodStartTick = 0;
-            }
-            break;
-
-        case FAILOVER_SWITCH_TO_MAIN_GEN_OFF:
-            // GEN OFF first, TRANSFER still ON (your requested visual sequence)
-            HAL_GPIO_WritePin(RELAY_GEN_GPIO_Port,      RELAY_GEN_Pin,      GPIO_PIN_RESET);
-            HAL_GPIO_WritePin(RELAY_TRANSFER_GPIO_Port, RELAY_TRANSFER_Pin, GPIO_PIN_SET);
-            HAL_GPIO_WritePin(RELAY_MAIN_GPIO_Port,     RELAY_MAIN_Pin,     GPIO_PIN_RESET);
-
-            if (now - switchStartTick >= SWITCH_DELAY_MS)
-            {
-                switchStartTick = now;
-                state = FAILOVER_SWITCH_TO_MAIN_TRANSFER_OFF;
-            }
-            break;
-
-        case FAILOVER_SWITCH_TO_MAIN_TRANSFER_OFF:
-            // Now drop TRANSFER as well (all OFF) for a delay
-            HAL_GPIO_WritePin(RELAY_TRANSFER_GPIO_Port, RELAY_TRANSFER_Pin, GPIO_PIN_RESET);
-            HAL_GPIO_WritePin(RELAY_MAIN_GPIO_Port,     RELAY_MAIN_Pin,     GPIO_PIN_RESET);
-            HAL_GPIO_WritePin(RELAY_GEN_GPIO_Port,      RELAY_GEN_Pin,      GPIO_PIN_RESET);
-
-            if (now - switchStartTick >= SWITCH_DELAY_MS)
-            {
-                switchStartTick = now;
-                state = FAILOVER_SWITCH_TO_MAIN_MAIN_ON;
-            }
-            break;
-
-        case FAILOVER_SWITCH_TO_MAIN_MAIN_ON:
-            // Bring MAIN back on, others off
-            Relay_MainOnly();
-            uart_printf("Failover: MAIN ON, load returned to mains.\r\n");
-            state = FAILOVER_ON_MAIN;
-            break;
-
-        default:
-            Relay_AllOff();
-            state = FAILOVER_ON_MAIN;
-            break;
+        uart_printf(
+            "+-------------------------------------------+\r\n"
+            "|        AUTO SWITCH DEMO: STATUS           |\r\n"
+            "+-------------------------------------------+\r\n"
+            "| Line Voltage: %6.1f V RMS                 |\r\n"
+            "| Source: %s                                |\r\n"
+            "| MAIN Relay:     %s                        |\r\n"
+            "| GEN Relay:      %s                        |\r\n"
+            "| TRANSFER Relay: %s                        |\r\n"
+            "+-------------------------------------------+\r\n",
+            line_vrms,
+            (src == SRC_MAIN) ? "MAIN" : "GEN ",
+            mainOn     ? "ON " : "OFF",
+            genOn      ? "ON " : "OFF",
+            transferOn ? "ON " : "OFF"
+        );
     }
 }
 
 /*
- * RESERVED: Generator simulator state machine demo.
+ * GenSim: STARTUP sequence
+ *
+ * Returns:
+ *   0 -> still running sequence
+ *   1 -> sequence finished (S3 ON, generator "running")
+ */
+static uint8_t GenSim_RunStartup(void)
+{
+    typedef enum {
+        GS_START_IDLE = 0,
+        GS_START_S1_ACTIVE,
+        GS_START_CRANK,
+        GS_START_DONE
+    } GenSimStartState;
+
+    static GenSimStartState s = GS_START_IDLE;
+    static uint32_t stateStartTick = 0;
+    static uint32_t lastBlinkTick  = 0;
+    static uint8_t  s2On           = 0;
+
+    uint32_t now = HAL_GetTick();
+
+    switch (s)
+    {
+        case GS_START_IDLE:
+            // First entry: start the sequence
+            Status_AllOff();
+            Status_Set(1, 0, 0);   // S1 ON
+            stateStartTick = now;
+            uart_printf("GenSim: start sequence requested\r\n");
+            s = GS_START_S1_ACTIVE;
+            return 0;
+
+        case GS_START_S1_ACTIVE:
+            // S1 ON for 1 s
+            Status_Set(1, 0, 0);
+            if (now - stateStartTick >= GENSIM_STARTUP_S1_TIME_MS)
+            {
+                // Move to crank (S2 blinking)
+                s2On = 0;
+                lastBlinkTick = now;
+                stateStartTick = now;
+                uart_printf("GenSim: crank phase (S2 blink)\r\n");
+                s = GS_START_CRANK;
+            }
+            return 0;
+
+        case GS_START_CRANK:
+            // S1 ON, S2 blinking, S3 OFF
+            if (now - lastBlinkTick >= GENSIM_BLINK_PERIOD_MS)
+            {
+                s2On = !s2On;
+                lastBlinkTick = now;
+            }
+            Status_Set(1, s2On, 0);
+
+            // After crank time, generator is running
+            if (now - stateStartTick >= GENSIM_STARTUP_CRANK_TIME_MS)
+            {
+                // S3 ON, others OFF
+                Status_Set(0, 0, 1);
+                uart_printf("GenSim: generator running (S3 ON)\r\n");
+                s = GS_START_DONE;
+            }
+            return 0;
+
+        case GS_START_DONE:
+            // Final state: S3 ON only
+            Status_Set(0, 0, 1);
+            // Reset internal state for next time
+            s = GS_START_IDLE;
+            return 1;
+
+        default:
+            s = GS_START_IDLE;
+            return 1;
+    }
+}
+
+/*
+ * GenSim: SHUTDOWN sequence
+ *
+ * Returns:
+ *   0 -> still running sequence
+ *   1 -> sequence finished (all S1/S2/S3 OFF)
+ *
+ * Behavior (your requested version):
+ *  - S1 solid ON for 1 s (shutdown requested), S3 still ON.
+ *  - S2 blinking for 3 s as cooldown indicator, S1 stays ON, S3 stays ON.
+ *  - Then all OFF (generator stopped).
+ */
+static uint8_t GenSim_RunShutdown(void)
+{
+    typedef enum {
+        GS_SHUT_IDLE = 0,
+        GS_SHUT_S1_SOLID,
+        GS_SHUT_S2_BLINK,
+        GS_SHUT_DONE
+    } GenSimShutState;
+
+    static GenSimShutState s = GS_SHUT_IDLE;
+    static uint32_t stateStartTick = 0;
+    static uint32_t lastBlinkTick  = 0;
+    static uint8_t  s2On           = 0;
+
+    uint32_t now = HAL_GetTick();
+
+    switch (s)
+    {
+        case GS_SHUT_IDLE:
+            // Assume generator is running (S3 ON).
+            // Begin shutdown: S1 solid ON, S2 off, S3 stays ON.
+            Status_Set(1, 0, 1);
+            uart_printf("GenSim: shutdown requested\r\n");
+            stateStartTick = now;
+            s = GS_SHUT_S1_SOLID;
+            return 0;
+
+        case GS_SHUT_S1_SOLID:
+            // S1 solid for 1 s, S3 still ON
+            Status_Set(1, 0, 1);
+            if (now - stateStartTick >= GENSIM_SHUT_S1_SOLID_TIME_MS)
+            {
+                // Start cooldown: S2 blinking, S1 stays ON, S3 stays ON
+                s2On = 0;
+                lastBlinkTick = now;
+                stateStartTick = now;
+                uart_printf("GenSim: shutdown cooldown (S2 blink)\r\n");
+                s = GS_SHUT_S2_BLINK;
+            }
+            return 0;
+
+        case GS_SHUT_S2_BLINK:
+            // S2 blinking, S1 stays ON, S3 stays ON
+            if (now - lastBlinkTick >= GENSIM_BLINK_PERIOD_MS)
+            {
+                s2On = !s2On;
+                lastBlinkTick = now;
+            }
+            Status_Set(1, s2On, 1);
+
+            if (now - stateStartTick >= GENSIM_SHUT_S2_BLINK_TIME_MS)
+            {
+                // Cooldown complete — turn off everything.
+                Status_AllOff();
+                uart_printf("GenSim: generator stopped\r\n");
+                s = GS_SHUT_DONE;
+            }
+            return 0;
+
+        case GS_SHUT_DONE:
+            Status_AllOff();
+            // Reset for next use
+            s = GS_SHUT_IDLE;
+            return 1;
+
+        default:
+            s = GS_SHUT_IDLE;
+            return 1;
+    }
+}
+
+/*
+ * Demo_GenSim:
+ * - Waits 5 s
+ * - Runs STARTUP sequence (S1 → S2 blink → S3)
+ * - Holds RUNNING (S3 ON) for 5 s
+ * - Runs SHUTDOWN sequence (S1 solid → S2 blink → all off)
+ * - Loops forever
  */
 void Demo_GenSim(void)
 {
-    // TODO: implement full GenSim state machine here using LED_S1/S2/S3
+    typedef enum {
+        GENSIM_DEMO_WAIT_STARTUP = 0,
+        GENSIM_DEMO_DO_STARTUP,
+        GENSIM_DEMO_RUNNING_HOLD,
+        GENSIM_DEMO_DO_SHUTDOWN
+    } GenSimDemoState;
+
+    static GenSimDemoState demoState = GENSIM_DEMO_WAIT_STARTUP;
+    static uint32_t phaseStartTick   = 0;
+
+    uint32_t now = HAL_GetTick();
+
+    switch (demoState)
+    {
+        case GENSIM_DEMO_WAIT_STARTUP:
+            // Idle, all status LEDs off
+            Status_AllOff();
+            if (phaseStartTick == 0)
+            {
+                phaseStartTick = now;  // start delay timer
+            }
+
+            if (now - phaseStartTick >= GENSIM_DEMO_DELAY_MS)
+            {
+                uart_printf("GenSim demo: starting STARTUP sequence\r\n");
+                phaseStartTick = 0;  // reset for next use
+                demoState = GENSIM_DEMO_DO_STARTUP;
+            }
+            break;
+
+        case GENSIM_DEMO_DO_STARTUP:
+            if (GenSim_RunStartup())
+            {
+                // Startup finished: generator is running (S3 ON)
+                uart_printf("GenSim demo: STARTUP complete, generator running\r\n");
+                phaseStartTick = now;
+                demoState = GENSIM_DEMO_RUNNING_HOLD;
+            }
+            break;
+
+        case GENSIM_DEMO_RUNNING_HOLD:
+            // Keep S3 ON to represent running
+            Status_Set(0, 0, 1);
+
+            if (now - phaseStartTick >= GENSIM_DEMO_DELAY_MS)
+            {
+                uart_printf("GenSim demo: starting SHUTDOWN sequence\r\n");
+                phaseStartTick = 0;
+                demoState = GENSIM_DEMO_DO_SHUTDOWN;
+            }
+            break;
+
+        case GENSIM_DEMO_DO_SHUTDOWN:
+            if (GenSim_RunShutdown())
+            {
+                uart_printf("GenSim demo: SHUTDOWN complete, generator stopped\r\n");
+                phaseStartTick = now;
+                // Loop back to the start so the demo repeats:
+                demoState = GENSIM_DEMO_WAIT_STARTUP;
+            }
+            break;
+
+        default:
+            demoState = GENSIM_DEMO_WAIT_STARTUP;
+            phaseStartTick = 0;
+            break;
+    }
 }
 
 /*
@@ -585,7 +665,7 @@ void Demo_GenSim(void)
  */
 void Demo_FinalCombined(void)
 {
-    // TODO: call GenSim + monitoring + any extra UI behavior here
+    // TODO: call Failover + GenSim + monitoring + any final display behavior here
 }
 
 /* USER CODE END 0 */
@@ -603,13 +683,24 @@ int main(void)
 
   /* MCU Configuration--------------------------------------------------------*/
 
+  /* Reset of all peripherals, Initializes the Flash interface and the Systick. */
   HAL_Init();
+
+  /* USER CODE BEGIN Init */
+
+  /* USER CODE END Init */
+
+  /* Configure the system clock */
   SystemClock_Config();
 
+  /* USER CODE BEGIN SysInit */
+
+  /* USER CODE END SysInit */
+
+  /* Initialize all configured peripherals */
   MX_GPIO_Init();
   MX_USART2_UART_Init();
   MX_ADC1_Init();
-
   /* USER CODE BEGIN 2 */
   uart_printf("System started.\r\n");
   uart_printf("Demo config: V=%d, R=%d, F=%d, G=%d, C=%d\r\n",
@@ -619,47 +710,64 @@ int main(void)
               DEMO_GENSIM,
               DEMO_FINAL_COMBINED);
 
+  // Grab initial button state for edge detection demo
   lastButtonState = HAL_GPIO_ReadPin(B1_GPIO_Port, B1_Pin);
 
-  // Power LED
+  // Turn on power LED so we know the board/PCB has power
   HAL_GPIO_WritePin(LED_PWR_GPIO_Port, LED_PWR_Pin, GPIO_PIN_SET);
 
+  // Ensure status LEDs and relay drivers start in a known OFF state
   Status_AllOff();
   Relay_AllOff();
+
   /* USER CODE END 2 */
 
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
   while (1)
   {
+    /*
+     * CENTRAL DEMO DISPATCH
+     *
+     * - Demo_ButtonLed() can safely run in all modes
+     *   (just watches the blue button and toggles LD2).
+     * - Enable exactly ONE of the DEMO_* main modes at the top.
+     */
+
+    // Keep the button → LD2 demo active in all modes
     Demo_ButtonLed();
 
 #if DEMO_VOLTAGE_TEST
+    // ZMPT + RMS UART demo
     Demo_Voltage();
 #endif
 
 #if DEMO_RELAY_TEST
+    // Relay-only pattern using LEDs on RELAY_* pins
     Demo_RelayTest();
 #endif
 
 #if DEMO_FAILOVER
+    // Automatic failover demo (MAIN ↔ GEN) using relays and voltage
     Demo_Failover();
 #endif
 
 #if DEMO_GENSIM
+    // Generator simulator LED-only startup/shutdown demo
     Demo_GenSim();
 #endif
 
 #if DEMO_FINAL_COMBINED
+    // Final combined project behavior (future)
     Demo_FinalCombined();
 #endif
 
-  }
-  /* USER CODE END WHILE */
+    /* USER CODE END WHILE */
 
-  /* USER CODE BEGIN 3 */
+    /* USER CODE BEGIN 3 */
+  }
+  /* USER CODE END 3 */
 }
-/* USER CODE END 3 */
 
 /**
   * @brief System Clock Configuration
@@ -670,11 +778,16 @@ void SystemClock_Config(void)
   RCC_OscInitTypeDef RCC_OscInitStruct = {0};
   RCC_ClkInitTypeDef RCC_ClkInitStruct = {0};
 
+  /** Configure the main internal regulator output voltage
+  */
   if (HAL_PWREx_ControlVoltageScaling(PWR_REGULATOR_VOLTAGE_SCALE1) != HAL_OK)
   {
     Error_Handler();
   }
 
+  /** Initializes the RCC Oscillators according to the specified parameters
+  * in the RCC_OscInitTypeDef structure.
+  */
   RCC_OscInitStruct.OscillatorType = RCC_OSCILLATORTYPE_HSI;
   RCC_OscInitStruct.HSIState = RCC_HSI_ON;
   RCC_OscInitStruct.HSICalibrationValue = RCC_HSICALIBRATION_DEFAULT;
@@ -690,6 +803,8 @@ void SystemClock_Config(void)
     Error_Handler();
   }
 
+  /** Initializes the CPU, AHB and APB buses clocks
+  */
   RCC_ClkInitStruct.ClockType = RCC_CLOCKTYPE_HCLK|RCC_CLOCKTYPE_SYSCLK
                               |RCC_CLOCKTYPE_PCLK1|RCC_CLOCKTYPE_PCLK2;
   RCC_ClkInitStruct.SYSCLKSource = RCC_SYSCLKSOURCE_PLLCLK;
@@ -710,9 +825,20 @@ void SystemClock_Config(void)
   */
 static void MX_ADC1_Init(void)
 {
+
+  /* USER CODE BEGIN ADC1_Init 0 */
+
+  /* USER CODE END ADC1_Init 0 */
+
   ADC_MultiModeTypeDef multimode = {0};
   ADC_ChannelConfTypeDef sConfig = {0};
 
+  /* USER CODE BEGIN ADC1_Init 1 */
+
+  /* USER CODE END ADC1_Init 1 */
+
+  /** Common config
+  */
   hadc1.Instance = ADC1;
   hadc1.Init.ClockPrescaler = ADC_CLOCK_ASYNC_DIV1;
   hadc1.Init.Resolution = ADC_RESOLUTION_12B;
@@ -733,12 +859,16 @@ static void MX_ADC1_Init(void)
     Error_Handler();
   }
 
+  /** Configure the ADC multi-mode
+  */
   multimode.Mode = ADC_MODE_INDEPENDENT;
   if (HAL_ADCEx_MultiModeConfigChannel(&hadc1, &multimode) != HAL_OK)
   {
     Error_Handler();
   }
 
+  /** Configure Regular Channel
+  */
   sConfig.Channel = ADC_CHANNEL_5;         // PA0 / IN5 for ZMPT
   sConfig.Rank = ADC_REGULAR_RANK_1;
   sConfig.SamplingTime = ADC_SAMPLETIME_2CYCLES_5;
@@ -749,6 +879,10 @@ static void MX_ADC1_Init(void)
   {
     Error_Handler();
   }
+  /* USER CODE BEGIN ADC1_Init 2 */
+
+  /* USER CODE END ADC1_Init 2 */
+
 }
 
 /**
@@ -758,6 +892,14 @@ static void MX_ADC1_Init(void)
   */
 static void MX_USART2_UART_Init(void)
 {
+
+  /* USER CODE BEGIN USART2_Init 0 */
+
+  /* USER CODE END USART2_Init 0 */
+
+  /* USER CODE BEGIN USART2_Init 1 */
+
+  /* USER CODE END USART2_Init 1 */
   huart2.Instance = USART2;
   huart2.Init.BaudRate = 115200;
   huart2.Init.WordLength = UART_WORDLENGTH_8B;
@@ -765,13 +907,17 @@ static void MX_USART2_UART_Init(void)
   huart2.Init.Parity = UART_PARITY_NONE;
   huart2.Init.Mode = UART_MODE_TX_RX;
   huart2.Init.HwFlowCtl = UART_HWCONTROL_NONE;
-  huart2.Init.OverSampling   = UART_OVERSAMPLING_16;
+  huart2.Init.OverSampling = UART_OVERSAMPLING_16;
   huart2.Init.OneBitSampling = UART_ONE_BIT_SAMPLE_DISABLE;
   huart2.AdvancedInit.AdvFeatureInit = UART_ADVFEATURE_NO_INIT;
   if (HAL_UART_Init(&huart2) != HAL_OK)
   {
     Error_Handler();
   }
+  /* USER CODE BEGIN_USART2_Init 2 */
+
+  /* USER CODE END_USART2_Init 2 */
+
 }
 
 /**
@@ -782,31 +928,45 @@ static void MX_USART2_UART_Init(void)
 static void MX_GPIO_Init(void)
 {
   GPIO_InitTypeDef GPIO_InitStruct = {0};
+  /* USER CODE BEGIN MX_GPIO_Init_1 */
 
+  /* USER CODE END MX_GPIO_Init_1 */
+
+  /* GPIO Ports Clock Enable */
   __HAL_RCC_GPIOC_CLK_ENABLE();
   __HAL_RCC_GPIOH_CLK_ENABLE();
   __HAL_RCC_GPIOA_CLK_ENABLE();
   __HAL_RCC_GPIOB_CLK_ENABLE();
 
+  /*Configure GPIO pin Output Level */
   HAL_GPIO_WritePin(GPIOA, LD2_Pin|RELAY_MAIN_Pin|RELAY_GEN_Pin|RELAY_TRANSFER_Pin, GPIO_PIN_RESET);
+
+  /*Configure GPIO pin Output Level */
   HAL_GPIO_WritePin(GPIOB, LED_PWR_Pin|LED_S1_Pin|LED_S2_Pin|LED_S3_Pin, GPIO_PIN_RESET);
 
+  /*Configure GPIO pin : B1_Pin */
   GPIO_InitStruct.Pin = B1_Pin;
   GPIO_InitStruct.Mode = GPIO_MODE_INPUT;  // polling mode, no interrupt
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   HAL_GPIO_Init(B1_GPIO_Port, &GPIO_InitStruct);
 
+  /*Configure GPIO pins : LD2_Pin RELAY_MAIN_Pin RELAY_GEN_Pin RELAY_TRANSFER_Pin */
   GPIO_InitStruct.Pin = LD2_Pin|RELAY_MAIN_Pin|RELAY_GEN_Pin|RELAY_TRANSFER_Pin;
   GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
   HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
 
+  /*Configure GPIO pins : LED_PWR_Pin LED_S1_Pin LED_S2_Pin LED_S3_Pin */
   GPIO_InitStruct.Pin = LED_PWR_Pin|LED_S1_Pin|LED_S2_Pin|LED_S3_Pin;
   GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
   HAL_GPIO_Init(GPIOB, &GPIO_InitStruct);
+
+  /* USER CODE BEGIN MX_GPIO_Init_2 */
+  // Additional GPIO user init (if needed) can go here.
+  /* USER CODE END MX_GPIO_Init_2 */
 }
 
 /**
@@ -815,13 +975,24 @@ static void MX_GPIO_Init(void)
   */
 void Error_Handler(void)
 {
+  /* USER CODE BEGIN Error_Handler_Debug */
   __disable_irq();
   while (1)
   {
   }
+  /* USER CODE END Error_Handler_Debug */
 }
 #ifdef USE_FULL_ASSERT
+/**
+  * @brief  Reports the name of the source file and the source line number
+  *         where the assert_param error has occurred.
+  * @param  file: pointer to the source file name
+  * @param  line: assert_param error line source number
+  * @retval None
+  */
 void assert_failed(uint8_t *file, uint32_t line)
 {
+  /* USER CODE BEGIN 6 */
+  /* USER CODE END 6 */
 }
 #endif /* USE_FULL_ASSERT */
