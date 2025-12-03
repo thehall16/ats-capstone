@@ -34,6 +34,25 @@
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
 
+/*
+ * Demo mode switches.
+ *
+ * Only enable ONE main demo at a time to keep behavior predictable.
+ * Demo_ButtonLed() is safe to run in all modes.
+ */
+#define DEMO_VOLTAGE_TEST      0   // ZMPT + RMS + UART demo
+#define DEMO_RELAY_TEST        1   // Relay + GPIO-only demo (temp LEDs on RELAY_* pins)
+#define DEMO_GENSIM            0   // TODO: Generator simulator state machine
+#define DEMO_FINAL_COMBINED    0   // TODO: Final combined project demo
+
+// Hard-coded ADC DC offset (midpoint) for the ZMPT output.
+// Based on initial no-AC measurement (approx. 3080).
+const uint16_t ADC_OFFSET = 3080;
+
+// From calibration: ~0.61 Vrms at module OUT when line is 120 Vrms.
+// 120 / 0.61 ≈ 196.7  --> 185.5f more accurate after tuning
+const float lineScaleFactor = 185.5f;      // converts module Vrms -> line Vrms
+
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
@@ -47,16 +66,11 @@ ADC_HandleTypeDef hadc1;
 UART_HandleTypeDef huart2;
 
 /* USER CODE BEGIN PV */
+
+// Button → LD2 state for the button demo
 uint8_t  lastButtonState = GPIO_PIN_SET;   // assume not pressed at start
 uint8_t  ledState        = 0;              // LED off
 
-// Hard-coded ADC DC offset (midpoint) for the ZMPT output.
-// based on inital no-AC measurement (approx. 3100).
-const uint16_t ADC_OFFSET = 3080;
-
-// From calibration: ~0.61 Vrms at module OUT when line is 120 Vrms.
-// 120 / 0.61 � 196.7
-const float lineScaleFactor = 185.5f;      // converts module Vrms -> line Vrms
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -66,10 +80,18 @@ static void MX_USART2_UART_Init(void);
 static void MX_ADC1_Init(void);
 /* USER CODE BEGIN PFP */
 
+// Demo function prototypes
+void Demo_ButtonLed(void);        // Blue button toggles LD2 + UART print
+void Demo_Voltage(void);          // ZMPT voltage measurement + UART print
+void Demo_RelayTest(void);        // Relay-only GPIO demo (temp LEDs on RELAY_* pins)
+void Demo_GenSim(void);           // TODO: full generator simulator logic
+void Demo_FinalCombined(void);    // TODO: final combined project demo
+
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
+
 void uart_printf(const char *fmt, ...)
 {
     char buffer[128];
@@ -115,6 +137,175 @@ float get_ac_rms(uint16_t samples)
     float meanSq = sumSq / (float)samples;
     return sqrtf(meanSq);   // RMS of AC part at module output, in volts
 }
+
+/*
+ * Demo: blue button (B1) toggles the on-board LED (LD2)
+ * and prints the new state over UART.
+ *
+ * This can safely run alongside any other demo.
+ */
+void Demo_ButtonLed(void)
+{
+    uint8_t currentButton = HAL_GPIO_ReadPin(B1_GPIO_Port, B1_Pin);
+
+    // Button is active LOW on the Nucleo board
+    if (currentButton == GPIO_PIN_RESET && lastButtonState == GPIO_PIN_SET)
+    {
+        ledState = !ledState;
+
+        HAL_GPIO_WritePin(LD2_GPIO_Port, LD2_Pin,
+                          ledState ? GPIO_PIN_SET : GPIO_PIN_RESET);
+
+        uart_printf("Button pressed. LED is now %s\r\n",
+                    ledState ? "ON" : "OFF");
+    }
+
+    lastButtonState = currentButton;
+}
+
+/*
+ * Demo: Voltage measurement via ZMPT.
+ * Prints module Vrms and calculated line Vrms once every 2 seconds.
+ * This is your existing RMS demo, just wrapped into its own function.
+ */
+void Demo_Voltage(void)
+{
+    static uint32_t lastPrint = 0;
+    uint32_t now = HAL_GetTick();
+
+    if (now - lastPrint >= 2000)    // 2000 ms = 2 seconds
+    {
+        float v_ac_rms  = get_ac_rms(12000);     // module RMS
+        float line_vrms = v_ac_rms * lineScaleFactor;
+
+        // ignore tiny noise when no AC is present
+        if (line_vrms < 5.0f)
+            line_vrms = 0.0f;
+
+        int displayVolts = (int)(line_vrms + 0.5f);
+
+        uart_printf("Module Vrms: %.3f V | Line: %d V\r\n",
+                    v_ac_rms, displayVolts);
+
+        lastPrint = now;
+    }
+}
+
+/*
+ * Relay helper functions.
+ * Use ONLY the RELAY_* pins here.
+ * You will hang temporary LEDs + resistors from these pins to GND for the demo.
+ */
+
+static void Relay_AllOff(void)
+{
+    HAL_GPIO_WritePin(RELAY_MAIN_GPIO_Port,     RELAY_MAIN_Pin,     GPIO_PIN_RESET);
+    HAL_GPIO_WritePin(RELAY_GEN_GPIO_Port,      RELAY_GEN_Pin,      GPIO_PIN_RESET);
+    HAL_GPIO_WritePin(RELAY_TRANSFER_GPIO_Port, RELAY_TRANSFER_Pin, GPIO_PIN_RESET);
+}
+
+static void Relay_MainOn(void)
+{
+    HAL_GPIO_WritePin(RELAY_MAIN_GPIO_Port,     RELAY_MAIN_Pin,     GPIO_PIN_SET);
+    HAL_GPIO_WritePin(RELAY_GEN_GPIO_Port,      RELAY_GEN_Pin,      GPIO_PIN_RESET);
+    HAL_GPIO_WritePin(RELAY_TRANSFER_GPIO_Port, RELAY_TRANSFER_Pin, GPIO_PIN_RESET);
+}
+
+static void Relay_GenOn(void)
+{
+    HAL_GPIO_WritePin(RELAY_MAIN_GPIO_Port,     RELAY_MAIN_Pin,     GPIO_PIN_RESET);
+    HAL_GPIO_WritePin(RELAY_GEN_GPIO_Port,      RELAY_GEN_Pin,      GPIO_PIN_SET);
+    HAL_GPIO_WritePin(RELAY_TRANSFER_GPIO_Port, RELAY_TRANSFER_Pin, GPIO_PIN_RESET);
+}
+
+static void Relay_TransferOn(void)
+{
+    HAL_GPIO_WritePin(RELAY_MAIN_GPIO_Port,     RELAY_MAIN_Pin,     GPIO_PIN_RESET);
+    HAL_GPIO_WritePin(RELAY_GEN_GPIO_Port,      RELAY_GEN_Pin,      GPIO_PIN_RESET);
+    HAL_GPIO_WritePin(RELAY_TRANSFER_GPIO_Port, RELAY_TRANSFER_Pin, GPIO_PIN_SET);
+}
+
+/*
+ * Optional: status LED helpers (reserved for GenSim / final demo).
+ * These use LED_S1/S2/S3 but are NOT used in the relay demo.
+ */
+
+static void Status_AllOff(void)
+{
+    HAL_GPIO_WritePin(LED_S1_GPIO_Port, LED_S1_Pin, GPIO_PIN_RESET);
+    HAL_GPIO_WritePin(LED_S2_GPIO_Port, LED_S2_Pin, GPIO_PIN_RESET);
+    HAL_GPIO_WritePin(LED_S3_GPIO_Port, LED_S3_Pin, GPIO_PIN_RESET);
+}
+
+static void Status_Set(uint8_t s1, uint8_t s2, uint8_t s3)
+{
+    HAL_GPIO_WritePin(LED_S1_GPIO_Port, LED_S1_Pin, s1 ? GPIO_PIN_SET : GPIO_PIN_RESET);
+    HAL_GPIO_WritePin(LED_S2_GPIO_Port, LED_S2_Pin, s2 ? GPIO_PIN_SET : GPIO_PIN_RESET);
+    HAL_GPIO_WritePin(LED_S3_GPIO_Port, LED_S3_Pin, s3 ? GPIO_PIN_SET : GPIO_PIN_RESET);
+}
+
+/*
+ * Demo: Relay-only pattern.
+ * Cycles:
+ *   0: all OFF
+ *   1: MAIN ON
+ *   2: GEN ON
+ *   3: TRANSFER ON
+ *
+ * You connect test LEDs + resistors from each RELAY_* pin → GND.
+ */
+void Demo_RelayTest(void)
+{
+    static uint32_t lastStep = 0;
+    static int step = 0;
+    uint32_t now = HAL_GetTick();
+
+    if (now - lastStep >= 1000)   // every 1 second
+    {
+        lastStep = now;
+        step = (step + 1) % 4;
+
+        switch (step)
+        {
+            case 0:
+                uart_printf("Relay demo: all OFF\r\n");
+                Relay_AllOff();
+                break;
+
+            case 1:
+                uart_printf("Relay demo: MAIN ON\r\n");
+                Relay_MainOn();
+                break;
+
+            case 2:
+                uart_printf("Relay demo: GEN ON\r\n");
+                Relay_GenOn();
+                break;
+
+            case 3:
+                uart_printf("Relay demo: TRANSFER ON\r\n");
+                Relay_TransferOn();
+                break;
+        }
+    }
+}
+
+/*
+ * Placeholder: Generator simulator state machine demo.
+ */
+void Demo_GenSim(void)
+{
+    // TODO: implement GenSim state machine here (startup, transfer, shutdown)
+}
+
+/*
+ * Placeholder: FINAL / COMBINED PROJECT DEMO.
+ */
+void Demo_FinalCombined(void)
+{
+    // TODO: call GenSim + monitoring + any final display behavior here
+}
+
 /* USER CODE END 0 */
 
 /**
@@ -150,58 +341,58 @@ int main(void)
   MX_ADC1_Init();
   /* USER CODE BEGIN 2 */
   uart_printf("System started.\r\n");
-  uart_printf("Button->LED + ZMPT + RMS + UART demo\r\n");
+  uart_printf("Demo config: V=%d, R=%d, G=%d, F=%d\r\n",
+              DEMO_VOLTAGE_TEST,
+              DEMO_RELAY_TEST,
+              DEMO_GENSIM,
+              DEMO_FINAL_COMBINED);
 
-  // Grab initial button state for edge detection
+  // Grab initial button state for edge detection demo
   lastButtonState = HAL_GPIO_ReadPin(B1_GPIO_Port, B1_Pin);
+
+  // Turn on power LED so we know the board/PCB has power
+  HAL_GPIO_WritePin(LED_PWR_GPIO_Port, LED_PWR_Pin, GPIO_PIN_SET);
+
+  // Ensure status LEDs and relay drivers start in a known OFF state
+  Status_AllOff();
+  Relay_AllOff();
+
   /* USER CODE END 2 */
 
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
   while (1)
   {
-    /* -------- BUTTON -> LED TOGGLE -------- */
-uint8_t currentButton = HAL_GPIO_ReadPin(B1_GPIO_Port, B1_Pin);
+    /*
+     * CENTRAL DEMO DISPATCH
+     *
+     * - Demo_ButtonLed() can safely run in all modes
+     *   (just watches the blue button and toggles LD2).
+     * - Enable exactly ONE of the DEMO_* main modes at the top.
+     */
 
-// Button is active LOW on the Nucleo board
-if (currentButton == GPIO_PIN_RESET && lastButtonState == GPIO_PIN_SET)
-{
-    ledState = !ledState;
+    // Keep the button → LD2 demo active in all modes
+    Demo_ButtonLed();
 
-    HAL_GPIO_WritePin(LD2_GPIO_Port, LD2_Pin,
-                      ledState ? GPIO_PIN_SET : GPIO_PIN_RESET);
+#if DEMO_VOLTAGE_TEST
+    // ZMPT + RMS UART demo
+    Demo_Voltage();
+#endif
 
-    uart_printf("Button pressed. LED is now %s\r\n",
-                ledState ? "ON" : "OFF");
-}
+#if DEMO_RELAY_TEST
+    // Relay-only pattern using LEDs on RELAY_* pins
+    Demo_RelayTest();
+#endif
 
-lastButtonState = currentButton;
+#if DEMO_GENSIM
+    // Generator simulator state machine demo (future)
+    Demo_GenSim();
+#endif
 
-
-/* -------- RMS MEASUREMENT & THROTTLED PRINTING -------- */
-
-
-
-// print only once every 2 seconds
-static uint32_t lastPrint = 0;
-uint32_t now = HAL_GetTick();
-
-if (now - lastPrint >= 2000)    // 2000 ms = 2 seconds
-{
-    float v_ac_rms  = get_ac_rms(12000);     // module RMS
-    float line_vrms = v_ac_rms * lineScaleFactor;
-
-    // ignore tiny noise when no AC is present
-    if (line_vrms < 5.0f)
-        line_vrms = 0.0f;
-
-    int displayVolts = (int)(line_vrms + 0.5f);
-
-    uart_printf("Module Vrms: %.3f V | Line: %d V\r\n",
-                v_ac_rms, displayVolts);
-
-    lastPrint = now;
-}
+#if DEMO_FINAL_COMBINED
+    // Final combined project behavior (future)
+    Demo_FinalCombined();
+#endif
 
     /* USER CODE END WHILE */
 
@@ -310,9 +501,9 @@ static void MX_ADC1_Init(void)
 
   /** Configure Regular Channel
   */
-  sConfig.Channel = ADC_CHANNEL_5;                 // PA0 / IN5
+  sConfig.Channel = ADC_CHANNEL_5;         // PA0 / IN5 for ZMPT
   sConfig.Rank = ADC_REGULAR_RANK_1;
-  sConfig.SamplingTime = ADC_SAMPLETIME_2CYCLES_5; // you can increase if noisy
+  sConfig.SamplingTime = ADC_SAMPLETIME_2CYCLES_5;
   sConfig.SingleDiff = ADC_SINGLE_ENDED;
   sConfig.OffsetNumber = ADC_OFFSET_NONE;
   sConfig.Offset = 0;
@@ -355,7 +546,7 @@ static void MX_USART2_UART_Init(void)
   {
     Error_Handler();
   }
-  /* USER CODE BEGIN USART2_Init 2 */
+  /* USER CODE BEGIN_USART2_Init 2 */
 
   /* USER CODE END USART2_Init 2 */
 
@@ -380,28 +571,38 @@ static void MX_GPIO_Init(void)
   __HAL_RCC_GPIOB_CLK_ENABLE();
 
   /*Configure GPIO pin Output Level */
-  HAL_GPIO_WritePin(LD2_GPIO_Port, LD2_Pin, GPIO_PIN_RESET);
+  HAL_GPIO_WritePin(GPIOA, LD2_Pin|RELAY_MAIN_Pin|RELAY_GEN_Pin|RELAY_TRANSFER_Pin, GPIO_PIN_RESET);
+
+  /*Configure GPIO pin Output Level */
+  HAL_GPIO_WritePin(GPIOB, LED_PWR_Pin|LED_S1_Pin|LED_S2_Pin|LED_S3_Pin, GPIO_PIN_RESET);
 
   /*Configure GPIO pin : B1_Pin */
   GPIO_InitStruct.Pin = B1_Pin;
-  GPIO_InitStruct.Mode = GPIO_MODE_INPUT;      // we poll it, no interrupt needed
+  GPIO_InitStruct.Mode = GPIO_MODE_INPUT;  // polling mode, no interrupt
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   HAL_GPIO_Init(B1_GPIO_Port, &GPIO_InitStruct);
 
-  /*Configure GPIO pin : LD2_Pin */
-  GPIO_InitStruct.Pin = LD2_Pin;
+  /*Configure GPIO pins : LD2_Pin RELAY_MAIN_Pin RELAY_GEN_Pin RELAY_TRANSFER_Pin */
+  GPIO_InitStruct.Pin = LD2_Pin|RELAY_MAIN_Pin|RELAY_GEN_Pin|RELAY_TRANSFER_Pin;
   GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
-  HAL_GPIO_Init(LD2_GPIO_Port, &GPIO_InitStruct);
+  HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
+
+  /*Configure GPIO pins : LED_PWR_Pin LED_S1_Pin LED_S2_Pin LED_S3_Pin */
+  GPIO_InitStruct.Pin = LED_PWR_Pin|LED_S1_Pin|LED_S2_Pin|LED_S3_Pin;
+  GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
+  GPIO_InitStruct.Pull = GPIO_NOPULL;
+  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
+  HAL_GPIO_Init(GPIOB, &GPIO_InitStruct);
 
   /* USER CODE BEGIN MX_GPIO_Init_2 */
-  // nothing extra for now
+  // Additional GPIO user init (if needed) can go here.
   /* USER CODE END MX_GPIO_Init_2 */
 }
 
 /* USER CODE BEGIN 4 */
-/* extra helper functions if needed */
+/* extra helper functions if needed are already above */
 /* USER CODE END 4 */
 
 /**
