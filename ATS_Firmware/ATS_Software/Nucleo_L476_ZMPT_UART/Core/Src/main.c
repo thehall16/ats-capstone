@@ -91,6 +91,9 @@ uint8_t  ledState        = 0;              // LED off
 // Global GenSim status for UART printing
 GenSimStatus_t g_GenSimStatus = GSTAT_IDLE;
 
+// NEW: flag set to 1 ONLY when GenSim is in RUNNING (S3 ON)
+uint8_t g_GenRunningFlag = 0;
+
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -117,7 +120,7 @@ uint8_t GenSim_Update(uint8_t requestRun);
 
 void uart_printf(const char *fmt, ...)
 {
-    char buffer[512];  // bigger buffer so ASCII boxes don't get chopped
+    char buffer[512];
     va_list args;
     va_start(args, fmt);
     int len = vsnprintf(buffer, sizeof(buffer), fmt, args);
@@ -164,8 +167,6 @@ float get_ac_rms(uint16_t samples)
 /*
  * Demo: blue button (B1) toggles the on-board LED (LD2)
  * and prints the new state over UART.
- *
- * This can safely run alongside any other demo.
  */
 void Demo_ButtonLed(void)
 {
@@ -215,7 +216,6 @@ void Demo_Voltage(void)
 
 /*
  * Relay helper functions.
- * These drive the actual relay outputs (or LEDs hung from RELAY_* pins).
  */
 static void Relay_AllOff(void)
 {
@@ -244,8 +244,7 @@ static void Relay_TransferOn(void)
 }
 
 /*
- * Status LED helpers (GenSim visuals).
- * These use LED_S1/S2/S3 but are NOT used to represent the real relays.
+ * Status LED helpers (GenSim visuals) on LED_S1/S2/S3.
  */
 static void Status_AllOff(void)
 {
@@ -263,13 +262,6 @@ static void Status_Set(uint8_t s1, uint8_t s2, uint8_t s3)
 
 /*
  * Demo: Relay-only pattern.
- * Cycles:
- *   0: all OFF
- *   1: MAIN ON
- *   2: GEN ON
- *   3: TRANSFER ON
- *
- * You connect test LEDs + resistors from each RELAY_* pin → GND.
  */
 void Demo_RelayTest(void)
 {
@@ -311,18 +303,11 @@ void Demo_RelayTest(void)
  * GenSim_Update(requestRun)
  *
  * requestRun = 1 → we WANT the generator running
- *   - if currently idle/stopped, runs startup animation:
- *       S1 ON (1s), then S1+S2 crank blink (3s), then S3 ON = RUNNING
- *   - then stays in RUNNING S3 as long as requestRun stays 1
- *
  * requestRun = 0 → we WANT the generator stopped
- *   - if currently running, runs shutdown animation:
- *       S1+S3 ON (1s), then S1+S3 with S2 blink (3s), then all OFF = STOPPED
- *   - then stays in STOPPED as long as requestRun stays 0
  *
  * Returns:
  *   1 → GenSim is in RUNNING S3 (generator “up”)
- *   0 → any other state (idle, starting, shutting down, stopped)
+ *   0 → any other state
  */
 uint8_t GenSim_Update(uint8_t requestRun)
 {
@@ -493,11 +478,13 @@ uint8_t GenSim_Update(uint8_t requestRun)
             break;
     }
 
-    return (g_GenSimStatus == GSTAT_RUNNING);
+    // NEW: drive the running flag strictly from GenSimStatus
+    g_GenRunningFlag = (g_GenSimStatus == GSTAT_RUNNING);
+    return g_GenRunningFlag;
 }
 
 /*
- * Standalone GenSim demo (just loops startup → hold → shutdown).
+ * Standalone GenSim demo
  */
 void Demo_GenSimOnly(void)
 {
@@ -583,24 +570,24 @@ void Demo_FinalCombined(void)
             // We WANT generator running; GenSim will animate startup
             requestGenRun = 1;
 
-            // 0–1000 ms: all OFF
-            // 1000–2000 ms: GEN ON only
-            // >=2000 ms: GEN + TRANSFER ON → load on GEN
             if (now - transStartTick < 1000)
             {
+                // initial open interval: all relays off
                 Relay_AllOff();
-            }
-            else if (now - transStartTick < 2000)
-            {
-                Relay_GenOn();
-                HAL_GPIO_WritePin(RELAY_TRANSFER_GPIO_Port, RELAY_TRANSFER_Pin, GPIO_PIN_RESET);
             }
             else
             {
+                // after 1s we can close GEN, but keep TRANSFER open
                 Relay_GenOn();
-                Relay_TransferOn();
-                atsState = ATS_GEN;
-                uart_printf("ATS: Load now on GEN.\r\n");
+                HAL_GPIO_WritePin(RELAY_TRANSFER_GPIO_Port, RELAY_TRANSFER_Pin, GPIO_PIN_RESET);
+
+                // only move load to GEN once GenSim reports RUNNING
+                if (g_GenRunningFlag)
+                {
+                    Relay_TransferOn();
+                    atsState = ATS_GEN;
+                    uart_printf("ATS: Load now on GEN (GenSim RUNNING).\r\n");
+                }
             }
             break;
 
@@ -609,7 +596,7 @@ void Demo_FinalCombined(void)
             Relay_TransferOn();
             requestGenRun = 1;
 
-            // Look for good mains in tight window [117,123] for 2 seconds
+            // Look for good mains in [115,125] for 2 seconds
             if (line_vrms >= 115.0f && line_vrms <= 125.0f)
             {
                 if (goodStartTick == 0)
@@ -620,7 +607,7 @@ void Demo_FinalCombined(void)
                     uart_printf("ATS: MAIN voltage stable (%.1f V).\r\n", line_vrms);
                     uart_printf("ATS: Transitioning back to MAIN.\r\n");
 
-                    // Remove load from generator first
+                    // Remove load from generator first (TRANSFER open)
                     HAL_GPIO_WritePin(RELAY_TRANSFER_GPIO_Port, RELAY_TRANSFER_Pin, GPIO_PIN_RESET);
 
                     transStartTick = now;
@@ -640,7 +627,7 @@ void Demo_FinalCombined(void)
             // During transition back, we no longer want gen running
             requestGenRun = 0;
 
-            // 0–1000 ms: GEN ON (cooldown), TRANSFER OFF
+            // 0–1000 ms: GEN ON (cooldown), TRANSFER OFF, MAIN OFF
             // 1000–2000 ms: GEN OFF, all open
             // >=2000 ms: MAIN ON
             if (now - transStartTick < 1000)
@@ -671,7 +658,7 @@ void Demo_FinalCombined(void)
             break;
     }
 
-    // Update GenSim LEDs (purely visual, never blocks ATS)
+    // Update GenSim LEDs and running flag (never blocks ATS)
     GenSim_Update(requestGenRun);
 
     // Periodic UART status (once per 2 seconds)
@@ -688,7 +675,7 @@ void Demo_FinalCombined(void)
         {
             case ATS_MAIN:     srcStr = "MAIN"; break;
             case ATS_GEN:      srcStr = "GEN "; break;
-            case ATS_TO_GEN:	srcStr = "TRAN"; break;
+            case ATS_TO_GEN:   srcStr = "TRAN"; break;
             case ATS_TO_MAIN:  srcStr = "TRAN"; break;
             default:           srcStr = "MIX?"; break;
         }
@@ -710,12 +697,12 @@ void Demo_FinalCombined(void)
             "+-------------------------------------------+\r\n"
             "|        FINAL ATS DEMO: STATUS             |\r\n"
             "+-------------------------------------------+\r\n"
-            "| Line Voltage: %6.1f V RMS                 |\r\n"
+            "| Line Voltage: %6.1f V RMS                |\r\n"
             "| Source: %-4s                              |\r\n"
-            "| MAIN Relay:     %s                        |\r\n"
-            "| GEN Relay:      %s                        |\r\n"
-            "| TRANSFER Relay: %s                        |\r\n"
-            "| GenSim Status:  %-13s           |\r\n"
+            "| MAIN Relay:     %s                       |\r\n"
+            "| GEN Relay:      %s                       |\r\n"
+            "| TRANSFER Relay: %s                       |\r\n"
+            "| GenSim Status:  %-13s             |\r\n"
             "+-------------------------------------------+\r\n",
             line_vrms,
             srcStr,
@@ -742,24 +729,14 @@ int main(void)
 
   /* MCU Configuration--------------------------------------------------------*/
 
-  /* Reset of all peripherals, Initializes the Flash interface and the Systick. */
   HAL_Init();
 
-  /* USER CODE BEGIN Init */
-
-  /* USER CODE END Init */
-
-  /* Configure the system clock */
   SystemClock_Config();
 
-  /* USER CODE BEGIN SysInit */
-
-  /* USER CODE END SysInit */
-
-  /* Initialize all configured peripherals */
   MX_GPIO_Init();
   MX_USART2_UART_Init();
   MX_ADC1_Init();
+
   /* USER CODE BEGIN 2 */
   uart_printf("System started.\r\n");
   uart_printf("Demo config: V=%d, R=%d, G=%d, F=%d\r\n",
@@ -781,18 +758,8 @@ int main(void)
 
   /* USER CODE END 2 */
 
-  /* Infinite loop */
-  /* USER CODE BEGIN WHILE */
   while (1)
   {
-    /*
-     * CENTRAL DEMO DISPATCH
-     *
-     * - Demo_ButtonLed() can safely run in all modes
-     *   (just watches the blue button and toggles LD2).
-     * - Enable exactly ONE of the main DEMO_* modes at the top.
-     */
-
     // Keep the button → LD2 demo active in all modes
     Demo_ButtonLed();
 
@@ -811,12 +778,7 @@ int main(void)
 #if DEMO_FINAL_ATS
     Demo_FinalCombined();
 #endif
-
-    /* USER CODE END WHILE */
-
-    /* USER CODE BEGIN 3 */
   }
-  /* USER CODE END 3 */
 }
 
 /**
@@ -828,16 +790,11 @@ void SystemClock_Config(void)
   RCC_OscInitTypeDef RCC_OscInitStruct = {0};
   RCC_ClkInitTypeDef RCC_ClkInitStruct = {0};
 
-  /** Configure the main internal regulator output voltage
-  */
   if (HAL_PWREx_ControlVoltageScaling(PWR_REGULATOR_VOLTAGE_SCALE1) != HAL_OK)
   {
     Error_Handler();
   }
 
-  /** Initializes the RCC Oscillators according to the specified parameters
-  * in the RCC_OscInitTypeDef structure.
-  */
   RCC_OscInitStruct.OscillatorType = RCC_OSCILLATORTYPE_HSI;
   RCC_OscInitStruct.HSIState = RCC_HSI_ON;
   RCC_OscInitStruct.HSICalibrationValue = RCC_HSICALIBRATION_DEFAULT;
@@ -853,8 +810,6 @@ void SystemClock_Config(void)
     Error_Handler();
   }
 
-  /** Initializes the CPU, AHB and APB buses clocks
-  */
   RCC_ClkInitStruct.ClockType = RCC_CLOCKTYPE_HCLK|RCC_CLOCKTYPE_SYSCLK
                               |RCC_CLOCKTYPE_PCLK1|RCC_CLOCKTYPE_PCLK2;
   RCC_ClkInitStruct.SYSCLKSource = RCC_SYSCLKSOURCE_PLLCLK;
@@ -875,20 +830,9 @@ void SystemClock_Config(void)
   */
 static void MX_ADC1_Init(void)
 {
-
-  /* USER CODE BEGIN ADC1_Init 0 */
-
-  /* USER CODE END ADC1_Init 0 */
-
   ADC_MultiModeTypeDef multimode = {0};
   ADC_ChannelConfTypeDef sConfig = {0};
 
-  /* USER CODE BEGIN ADC1_Init 1 */
-
-  /* USER CODE END ADC1_Init 1 */
-
-  /** Common config
-  */
   hadc1.Instance = ADC1;
   hadc1.Init.ClockPrescaler = ADC_CLOCK_ASYNC_DIV1;
   hadc1.Init.Resolution = ADC_RESOLUTION_12B;
@@ -909,16 +853,12 @@ static void MX_ADC1_Init(void)
     Error_Handler();
   }
 
-  /** Configure the ADC multi-mode
-  */
   multimode.Mode = ADC_MODE_INDEPENDENT;
   if (HAL_ADCEx_MultiModeConfigChannel(&hadc1, &multimode) != HAL_OK)
   {
     Error_Handler();
   }
 
-  /** Configure Regular Channel
-  */
   sConfig.Channel      = ADC_CHANNEL_5;         // PA0 / IN5 for ZMPT
   sConfig.Rank         = ADC_REGULAR_RANK_1;
   sConfig.SamplingTime = ADC_SAMPLETIME_2CYCLES_5;
@@ -929,10 +869,6 @@ static void MX_ADC1_Init(void)
   {
     Error_Handler();
   }
-  /* USER CODE BEGIN ADC1_Init 2 */
-
-  /* USER CODE END ADC1_Init 2 */
-
 }
 
 /**
@@ -942,14 +878,6 @@ static void MX_ADC1_Init(void)
   */
 static void MX_USART2_UART_Init(void)
 {
-
-  /* USER CODE BEGIN USART2_Init 0 */
-
-  /* USER CODE END USART2_Init 0 */
-
-  /* USER CODE BEGIN USART2_Init 1 */
-
-  /* USER CODE END USART2_Init 1 */
   huart2.Instance          = USART2;
   huart2.Init.BaudRate     = 115200;
   huart2.Init.WordLength   = UART_WORDLENGTH_8B;
@@ -964,10 +892,6 @@ static void MX_USART2_UART_Init(void)
   {
     Error_Handler();
   }
-  /* USER CODE BEGIN USART2_Init 2 */
-
-  /* USER CODE END USART2_Init 2 */
-
 }
 
 /**
@@ -978,20 +902,14 @@ static void MX_USART2_UART_Init(void)
 static void MX_GPIO_Init(void)
 {
   GPIO_InitTypeDef GPIO_InitStruct = {0};
-  /* USER CODE BEGIN MX_GPIO_Init_1 */
 
-  /* USER CODE END MX_GPIO_Init_1 */
-
-  /* GPIO Ports Clock Enable */
   __HAL_RCC_GPIOC_CLK_ENABLE();
   __HAL_RCC_GPIOH_CLK_ENABLE();
   __HAL_RCC_GPIOA_CLK_ENABLE();
   __HAL_RCC_GPIOB_CLK_ENABLE();
 
-  /*Configure GPIO pin Output Level */
   HAL_GPIO_WritePin(GPIOA, LD2_Pin|RELAY_MAIN_Pin|RELAY_GEN_Pin|RELAY_TRANSFER_Pin, GPIO_PIN_RESET);
 
-  /*Configure GPIO pin Output Level */
   HAL_GPIO_WritePin(GPIOB, LED_PWR_Pin|LED_S1_Pin|LED_S2_Pin|LED_S3_Pin, GPIO_PIN_RESET);
 
   /*Configure GPIO pin : B1_Pin */
@@ -1013,15 +931,7 @@ static void MX_GPIO_Init(void)
   GPIO_InitStruct.Pull  = GPIO_NOPULL;
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
   HAL_GPIO_Init(GPIOB, &GPIO_InitStruct);
-
-  /* USER CODE BEGIN MX_GPIO_Init_2 */
-  // Additional GPIO user init (if needed) can go here.
-  /* USER CODE END MX_GPIO_Init_2 */
 }
-
-/* USER CODE BEGIN 4 */
-/* extra helper functions if needed are already above */
-/* USER CODE END 4 */
 
 /**
   * @brief  This function is executed in case of error occurrence.
@@ -1029,24 +939,14 @@ static void MX_GPIO_Init(void)
   */
 void Error_Handler(void)
 {
-  /* USER CODE BEGIN Error_Handler_Debug */
   __disable_irq();
   while (1)
   {
   }
-  /* USER CODE END Error_Handler_Debug */
 }
+
 #ifdef USE_FULL_ASSERT
-/**
-  * @brief  Reports the name of the source file and the source line number
-  *         where the assert_param error has occurred.
-  * @param  file: pointer to the source file name
-  * @param  line: assert_param error line source number
-  * @retval None
-  */
 void assert_failed(uint8_t *file, uint32_t line)
 {
-  /* USER CODE BEGIN 6 */
-  /* USER CODE END 6 */
 }
 #endif /* USE_FULL_ASSERT */
