@@ -46,12 +46,11 @@ typedef enum
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
 
-// Hard-coded ADC DC offset (midpoint) for the ZMPT output.
-// Based on initial no-AC measurement (approx. 3080).
+// Hard-coded ADC DC offset (midpoint) for the ZMPT output (no AC ~3080).
 const uint16_t ADC_OFFSET = 3080;
 
 // From calibration: ~0.61 Vrms at module OUT when line is 120 Vrms.
-// 120 / 0.61 ≈ 196.7  --> 185.5f more accurate after tuning
+// 120 / 0.61 ≈ 196.7 → tuned to 185.5f for your setup.
 const float lineScaleFactor = 185.5f;      // converts module Vrms -> line Vrms
 
 // GenSim timing constants (ms)
@@ -70,7 +69,6 @@ const float lineScaleFactor = 185.5f;      // converts module Vrms -> line Vrms
 
 /* Private variables ---------------------------------------------------------*/
 ADC_HandleTypeDef hadc1;
-
 UART_HandleTypeDef huart2;
 
 /* USER CODE BEGIN PV */
@@ -94,11 +92,8 @@ static void MX_USART2_UART_Init(void);
 static void MX_ADC1_Init(void);
 /* USER CODE BEGIN PFP */
 
-// Button → LD2 demo
-void Demo_ButtonLed(void);
-
-// ATS + GenSim main application task
-void ATS_Task(void);
+void ButtonLed_Task(void);     // Blue button toggles LD2 + UART print
+void ATS_Task(void);           // Final ATS + GenSim + relays
 
 // GenSim update (non-blocking visual engine)
 uint8_t GenSim_Update(uint8_t requestRun);
@@ -155,10 +150,11 @@ float get_ac_rms(uint16_t samples)
 }
 
 /*
- * Demo: blue button (B1) toggles the on-board LED (LD2)
+ * ButtonLed_Task:
+ * Blue user button (B1) toggles the on-board LED (LD2)
  * and prints the new state over UART.
  */
-void Demo_ButtonLed(void)
+void ButtonLed_Task(void)
 {
     uint8_t currentButton = HAL_GPIO_ReadPin(B1_GPIO_Port, B1_Pin);
 
@@ -412,6 +408,7 @@ uint8_t GenSim_Update(uint8_t requestRun)
  * - Watches line voltage and switches MAIN ↔ GEN with delays.
  * - Uses GenSim_Update() to animate generator start/stop on LED_S1/S2/S3.
  * - Drives RELAY_MAIN / RELAY_GEN / RELAY_TRANSFER.
+ * - Ensures GEN & TRANSFER are both blocked until GenSim reports RUNNING.
  */
 void ATS_Task(void)
 {
@@ -427,6 +424,7 @@ void ATS_Task(void)
     static uint32_t   goodStartTick  = 0;
     static uint32_t   transStartTick = 0;
     static uint32_t   lastPrint      = 0;
+    static uint32_t   genOnTick      = 0;   // delay between GEN closing and TRANSFER closing
 
     uint32_t now = HAL_GetTick();
 
@@ -462,6 +460,7 @@ void ATS_Task(void)
 
                     badStartTick  = 0;
                     goodStartTick = 0;
+                    genOnTick     = 0;
                 }
             }
             else
@@ -474,24 +473,39 @@ void ATS_Task(void)
             // We WANT generator running; GenSim will animate startup
             requestGenRun = 1;
 
-            if (now - transStartTick < 1000)
+            // Step 0: let GenSim do its full startup. Until it reports RUNNING,
+            // keep ALL relays open (no connection to load or mains).
+            if (!g_GenRunningFlag)
             {
-                // initial open interval: all relays off
                 Relay_AllOff();
+                genOnTick = 0;  // reset GEN-on timer while still starting
+                break;
+            }
+
+            // At this point: GenSim says RUNNING (S3 ON) → generator "ready".
+            // Step 1: close GEN relay first, keep TRANSFER open.
+            if (genOnTick == 0)
+            {
+                genOnTick = now;   // mark when we first turned GEN on
+                Relay_GenOn();
+                HAL_GPIO_WritePin(RELAY_TRANSFER_GPIO_Port, RELAY_TRANSFER_Pin, GPIO_PIN_RESET);
+                break;
+            }
+
+            // Step 2: after a short delay with GEN closed, safely close TRANSFER.
+            if (now - genOnTick < 1000)
+            {
+                // GEN relay held closed, TRANSFER still open
+                Relay_GenOn();
+                HAL_GPIO_WritePin(RELAY_TRANSFER_GPIO_Port, RELAY_TRANSFER_Pin, GPIO_PIN_RESET);
             }
             else
             {
-                // after 1s we can close GEN, but keep TRANSFER open
+                // GEN is on, TRANSFER now closes → load officially on generator
                 Relay_GenOn();
-                HAL_GPIO_WritePin(RELAY_TRANSFER_GPIO_Port, RELAY_TRANSFER_Pin, GPIO_PIN_RESET);
-
-                // only move load to GEN once GenSim reports RUNNING
-                if (g_GenRunningFlag)
-                {
-                    Relay_TransferOn();
-                    atsState = ATS_GEN;
-                    uart_printf("ATS: Load now on GEN (GenSim RUNNING).\r\n");
-                }
+                Relay_TransferOn();
+                atsState = ATS_GEN;
+                uart_printf("ATS: Load now on GEN (GenSim RUNNING & GEN relay ON).\r\n");
             }
             break;
 
@@ -519,6 +533,7 @@ void ATS_Task(void)
 
                     badStartTick  = 0;
                     goodStartTick = 0;
+                    genOnTick     = 0;
                 }
             }
             else
@@ -559,6 +574,7 @@ void ATS_Task(void)
             requestGenRun = 0;
             badStartTick  = 0;
             goodStartTick = 0;
+            genOnTick     = 0;
             break;
     }
 
@@ -599,7 +615,7 @@ void ATS_Task(void)
 
         uart_printf(
             "+-------------------------------------------+\r\n"
-            "|        ATS & GenSim STATUS                |\r\n"
+            "|        FINAL ATS DEMO: STATUS             |\r\n"
             "+-------------------------------------------+\r\n"
             "| Line Voltage: %6.1f V RMS                |\r\n"
             "| Source: %-4s                              |\r\n"
@@ -627,15 +643,13 @@ void ATS_Task(void)
 int main(void)
 {
   HAL_Init();
-
   SystemClock_Config();
-
   MX_GPIO_Init();
   MX_USART2_UART_Init();
   MX_ADC1_Init();
 
   /* USER CODE BEGIN 2 */
-  uart_printf("ATS / GenSim system started.\r\n");
+  uart_printf("System started.\r\n");
 
   // Grab initial button state for edge detection demo
   lastButtonState = HAL_GPIO_ReadPin(B1_GPIO_Port, B1_Pin);
@@ -647,13 +661,12 @@ int main(void)
   Status_AllOff();
   Relay_AllOff();
   Relay_MainOn();   // default: on mains
-
   /* USER CODE END 2 */
 
   while (1)
   {
-    // Simple board check
-    Demo_ButtonLed();
+    // Simple flash-test + UART sanity check
+    ButtonLed_Task();
 
     // Main ATS + GenSim logic
     ATS_Task();
@@ -788,7 +801,6 @@ static void MX_GPIO_Init(void)
   __HAL_RCC_GPIOB_CLK_ENABLE();
 
   HAL_GPIO_WritePin(GPIOA, LD2_Pin|RELAY_MAIN_Pin|RELAY_GEN_Pin|RELAY_TRANSFER_Pin, GPIO_PIN_RESET);
-
   HAL_GPIO_WritePin(GPIOB, LED_PWR_Pin|LED_S1_Pin|LED_S2_Pin|LED_S3_Pin, GPIO_PIN_RESET);
 
   /*Configure GPIO pin : B1_Pin */
