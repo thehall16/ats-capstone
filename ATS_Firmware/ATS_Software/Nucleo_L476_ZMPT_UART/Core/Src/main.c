@@ -46,15 +46,6 @@ typedef enum
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
 
-/*
- * Demo mode switches.
- * Enable only ONE main demo at a time (except ButtonLed, which is always safe).
- */
-#define DEMO_VOLTAGE_TEST      0   // ZMPT + RMS + UART demo
-#define DEMO_RELAY_TEST        0   // Simple relay pattern demo
-#define DEMO_GENSIM_ONLY       0   // Standalone GenSim LED sequence
-#define DEMO_FINAL_ATS         1   // Full ATS + GenSim + relays
-
 // Hard-coded ADC DC offset (midpoint) for the ZMPT output.
 // Based on initial no-AC measurement (approx. 3080).
 const uint16_t ADC_OFFSET = 3080;
@@ -91,7 +82,7 @@ uint8_t  ledState        = 0;              // LED off
 // Global GenSim status for UART printing
 GenSimStatus_t g_GenSimStatus = GSTAT_IDLE;
 
-// NEW: flag set to 1 ONLY when GenSim is in RUNNING (S3 ON)
+// Flag set to 1 ONLY when GenSim is in RUNNING (S3 ON)
 uint8_t g_GenRunningFlag = 0;
 
 /* USER CODE END PV */
@@ -103,12 +94,11 @@ static void MX_USART2_UART_Init(void);
 static void MX_ADC1_Init(void);
 /* USER CODE BEGIN PFP */
 
-// Demo function prototypes
-void Demo_ButtonLed(void);        // Blue button toggles LD2 + UART print
-void Demo_Voltage(void);          // ZMPT voltage measurement + UART print
-void Demo_RelayTest(void);        // Relay-only GPIO demo (temp LEDs on RELAY_* pins)
-void Demo_GenSimOnly(void);       // Standalone GenSim startup & shutdown loop
-void Demo_FinalCombined(void);    // Final ATS + GenSim + relays
+// Button → LD2 demo
+void Demo_ButtonLed(void);
+
+// ATS + GenSim main application task
+void ATS_Task(void);
 
 // GenSim update (non-blocking visual engine)
 uint8_t GenSim_Update(uint8_t requestRun);
@@ -188,33 +178,6 @@ void Demo_ButtonLed(void)
 }
 
 /*
- * Demo: Voltage measurement via ZMPT.
- * Prints module Vrms and calculated line Vrms once every 2 seconds.
- */
-void Demo_Voltage(void)
-{
-    static uint32_t lastPrint = 0;
-    uint32_t now = HAL_GetTick();
-
-    if (now - lastPrint >= 2000)    // 2000 ms = 2 seconds
-    {
-        float v_ac_rms  = get_ac_rms(12000);     // module RMS
-        float line_vrms = v_ac_rms * lineScaleFactor;
-
-        // ignore tiny noise when no AC is present
-        if (line_vrms < 5.0f)
-            line_vrms = 0.0f;
-
-        int displayVolts = (int)(line_vrms + 0.5f);
-
-        uart_printf("Module Vrms: %.3f V | Line: %d V\r\n",
-                    v_ac_rms, displayVolts);
-
-        lastPrint = now;
-    }
-}
-
-/*
  * Relay helper functions.
  */
 static void Relay_AllOff(void)
@@ -258,45 +221,6 @@ static void Status_Set(uint8_t s1, uint8_t s2, uint8_t s3)
     HAL_GPIO_WritePin(LED_S1_GPIO_Port, LED_S1_Pin, s1 ? GPIO_PIN_SET : GPIO_PIN_RESET);
     HAL_GPIO_WritePin(LED_S2_GPIO_Port, LED_S2_Pin, s2 ? GPIO_PIN_SET : GPIO_PIN_RESET);
     HAL_GPIO_WritePin(LED_S3_GPIO_Port, LED_S3_Pin, s3 ? GPIO_PIN_SET : GPIO_PIN_RESET);
-}
-
-/*
- * Demo: Relay-only pattern.
- */
-void Demo_RelayTest(void)
-{
-    static uint32_t lastStep = 0;
-    static int step = 0;
-    uint32_t now = HAL_GetTick();
-
-    if (now - lastStep >= 1000)   // every 1 second
-    {
-        lastStep = now;
-        step = (step + 1) % 4;
-
-        switch (step)
-        {
-            case 0:
-                uart_printf("Relay demo: all OFF\r\n");
-                Relay_AllOff();
-                break;
-
-            case 1:
-                uart_printf("Relay demo: MAIN ON\r\n");
-                Relay_MainOn();
-                break;
-
-            case 2:
-                uart_printf("Relay demo: GEN ON\r\n");
-                Relay_GenOn();
-                break;
-
-            case 3:
-                uart_printf("Relay demo: TRANSFER ON\r\n");
-                Relay_TransferOn();
-                break;
-        }
-    }
 }
 
 /*
@@ -478,38 +402,18 @@ uint8_t GenSim_Update(uint8_t requestRun)
             break;
     }
 
-    // NEW: drive the running flag strictly from GenSimStatus
+    // Drive the running flag strictly from GenSimStatus
     g_GenRunningFlag = (g_GenSimStatus == GSTAT_RUNNING);
     return g_GenRunningFlag;
 }
 
 /*
- * Standalone GenSim demo
- */
-void Demo_GenSimOnly(void)
-{
-    static uint8_t wantRun     = 0;
-    static uint32_t lastToggle = 0;
-    uint32_t now = HAL_GetTick();
-
-    // Toggle desired state every 8 seconds for demo
-    if (now - lastToggle >= 8000)
-    {
-        lastToggle = now;
-        wantRun = !wantRun;
-        uart_printf("Demo_GenSimOnly: wantRun = %d\r\n", wantRun);
-    }
-
-    GenSim_Update(wantRun);
-}
-
-/*
- * FINAL ATS DEMO:
+ * ATS_Task:
  * - Watches line voltage and switches MAIN ↔ GEN with delays.
  * - Uses GenSim_Update() to animate generator start/stop on LED_S1/S2/S3.
  * - Drives RELAY_MAIN / RELAY_GEN / RELAY_TRANSFER.
  */
-void Demo_FinalCombined(void)
+void ATS_Task(void)
 {
     typedef enum {
         ATS_MAIN = 0,     // load on MAIN
@@ -695,7 +599,7 @@ void Demo_FinalCombined(void)
 
         uart_printf(
             "+-------------------------------------------+\r\n"
-            "|        FINAL ATS DEMO: STATUS             |\r\n"
+            "|        ATS & GenSim STATUS                |\r\n"
             "+-------------------------------------------+\r\n"
             "| Line Voltage: %6.1f V RMS                |\r\n"
             "| Source: %-4s                              |\r\n"
@@ -722,13 +626,6 @@ void Demo_FinalCombined(void)
   */
 int main(void)
 {
-
-  /* USER CODE BEGIN 1 */
-
-  /* USER CODE END 1 */
-
-  /* MCU Configuration--------------------------------------------------------*/
-
   HAL_Init();
 
   SystemClock_Config();
@@ -738,12 +635,7 @@ int main(void)
   MX_ADC1_Init();
 
   /* USER CODE BEGIN 2 */
-  uart_printf("System started.\r\n");
-  uart_printf("Demo config: V=%d, R=%d, G=%d, F=%d\r\n",
-              DEMO_VOLTAGE_TEST,
-              DEMO_RELAY_TEST,
-              DEMO_GENSIM_ONLY,
-              DEMO_FINAL_ATS);
+  uart_printf("ATS / GenSim system started.\r\n");
 
   // Grab initial button state for edge detection demo
   lastButtonState = HAL_GPIO_ReadPin(B1_GPIO_Port, B1_Pin);
@@ -760,24 +652,11 @@ int main(void)
 
   while (1)
   {
-    // Keep the button → LD2 demo active in all modes
+    // Simple board check
     Demo_ButtonLed();
 
-#if DEMO_VOLTAGE_TEST
-    Demo_Voltage();
-#endif
-
-#if DEMO_RELAY_TEST
-    Demo_RelayTest();
-#endif
-
-#if DEMO_GENSIM_ONLY
-    Demo_GenSimOnly();
-#endif
-
-#if DEMO_FINAL_ATS
-    Demo_FinalCombined();
-#endif
+    // Main ATS + GenSim logic
+    ATS_Task();
   }
 }
 
