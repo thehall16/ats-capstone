@@ -29,6 +29,18 @@
 /* Private typedef -----------------------------------------------------------*/
 /* USER CODE BEGIN PTD */
 
+// High-level GenSim status for UART printing
+typedef enum
+{
+    GSTAT_IDLE = 0,
+    GSTAT_STARTUP_S1,
+    GSTAT_STARTUP_CRANK,
+    GSTAT_RUNNING,
+    GSTAT_SHUT_S1,
+    GSTAT_SHUT_COOLDOWN,
+    GSTAT_STOPPED
+} GenSimStatus_t;
+
 /* USER CODE END PTD */
 
 /* Private define ------------------------------------------------------------*/
@@ -36,15 +48,12 @@
 
 /*
  * Demo mode switches.
- *
- * Only enable ONE main demo at a time to keep behavior predictable.
- * Demo_ButtonLed() is safe to run in all modes.
+ * Enable only ONE main demo at a time (except ButtonLed, which is always safe).
  */
 #define DEMO_VOLTAGE_TEST      0   // ZMPT + RMS + UART demo
-#define DEMO_RELAY_TEST        0   // Relay + GPIO-only demo (temp LEDs on RELAY_* pins)
-#define DEMO_FAILOVER          0   // Voltage-based automatic MAIN/GEN switching (relays)
-#define DEMO_GENSIM            1   // Generator simulator LED-only startup/shutdown demo
-#define DEMO_FINAL_COMBINED    0   // Future: full project demo
+#define DEMO_RELAY_TEST        0   // Simple relay pattern demo
+#define DEMO_GENSIM_ONLY       0   // Standalone GenSim LED sequence
+#define DEMO_FINAL_ATS         1   // Full ATS + GenSim + relays
 
 // Hard-coded ADC DC offset (midpoint) for the ZMPT output.
 // Based on initial no-AC measurement (approx. 3080).
@@ -54,13 +63,12 @@ const uint16_t ADC_OFFSET = 3080;
 // 120 / 0.61 ≈ 196.7  --> 185.5f more accurate after tuning
 const float lineScaleFactor = 185.5f;      // converts module Vrms -> line Vrms
 
-/* GenSim timing constants */
-#define GENSIM_STARTUP_S1_TIME_MS        1000   // 1 s S1 solid at startup
-#define GENSIM_STARTUP_CRANK_TIME_MS     3000   // 3 s S2 blinking at startup
-#define GENSIM_SHUT_S1_SOLID_TIME_MS     1000   // 1 s S1 solid at shutdown
-#define GENSIM_SHUT_S2_BLINK_TIME_MS     3000   // 3 s S2 blinking at shutdown
-#define GENSIM_DEMO_DELAY_MS             5000   // 5 s delay before startup / shutdown
-#define GENSIM_BLINK_PERIOD_MS            250   // 250 ms blink period
+// GenSim timing constants (ms)
+#define GENSIM_STARTUP_S1_TIME_MS       1000U   // S1 solid at start
+#define GENSIM_STARTUP_CRANK_TIME_MS    3000U   // S2 blink (crank)
+#define GENSIM_SHUT_S1_SOLID_TIME_MS    1000U   // S1+S3 solid at shutdown start
+#define GENSIM_SHUT_S2_BLINK_TIME_MS    3000U   // S2 blink (cooldown)
+#define GENSIM_BLINK_PERIOD_MS          200U    // S2 blink period
 
 /* USER CODE END PD */
 
@@ -80,6 +88,9 @@ UART_HandleTypeDef huart2;
 uint8_t  lastButtonState = GPIO_PIN_SET;   // assume not pressed at start
 uint8_t  ledState        = 0;              // LED off
 
+// Global GenSim status for UART printing
+GenSimStatus_t g_GenSimStatus = GSTAT_IDLE;
+
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -93,9 +104,11 @@ static void MX_ADC1_Init(void);
 void Demo_ButtonLed(void);        // Blue button toggles LD2 + UART print
 void Demo_Voltage(void);          // ZMPT voltage measurement + UART print
 void Demo_RelayTest(void);        // Relay-only GPIO demo (temp LEDs on RELAY_* pins)
-void Demo_Failover(void);         // Voltage-based failover demo (relays + UART)
-void Demo_GenSim(void);           // Generator simulator LED-only demo
-void Demo_FinalCombined(void);    // Future: final combined project demo
+void Demo_GenSimOnly(void);       // Standalone GenSim startup & shutdown loop
+void Demo_FinalCombined(void);    // Final ATS + GenSim + relays
+
+// GenSim update (non-blocking visual engine)
+uint8_t GenSim_Update(uint8_t requestRun);
 
 /* USER CODE END PFP */
 
@@ -104,7 +117,7 @@ void Demo_FinalCombined(void);    // Future: final combined project demo
 
 void uart_printf(const char *fmt, ...)
 {
-    char buffer[256];
+    char buffer[512];  // bigger buffer so ASCII boxes don't get chopped
     va_list args;
     va_start(args, fmt);
     int len = vsnprintf(buffer, sizeof(buffer), fmt, args);
@@ -202,10 +215,8 @@ void Demo_Voltage(void)
 
 /*
  * Relay helper functions.
- * Use ONLY the RELAY_* pins here.
- * For the relay demo you hang temporary LEDs + resistors from these pins to GND.
+ * These drive the actual relay outputs (or LEDs hung from RELAY_* pins).
  */
-
 static void Relay_AllOff(void)
 {
     HAL_GPIO_WritePin(RELAY_MAIN_GPIO_Port,     RELAY_MAIN_Pin,     GPIO_PIN_RESET);
@@ -229,16 +240,13 @@ static void Relay_GenOn(void)
 
 static void Relay_TransferOn(void)
 {
-    HAL_GPIO_WritePin(RELAY_MAIN_GPIO_Port,     RELAY_MAIN_Pin,     GPIO_PIN_RESET);
-    HAL_GPIO_WritePin(RELAY_GEN_GPIO_Port,      RELAY_GEN_Pin,      GPIO_PIN_RESET);
     HAL_GPIO_WritePin(RELAY_TRANSFER_GPIO_Port, RELAY_TRANSFER_Pin, GPIO_PIN_SET);
 }
 
 /*
- * Optional: status LED helpers (reserved for GenSim / final demo).
- * These use LED_S1/S2/S3 and are NOT used in the simple relay demo.
+ * Status LED helpers (GenSim visuals).
+ * These use LED_S1/S2/S3 but are NOT used to represent the real relays.
  */
-
 static void Status_AllOff(void)
 {
     HAL_GPIO_WritePin(LED_S1_GPIO_Port, LED_S1_Pin, GPIO_PIN_RESET);
@@ -300,141 +308,35 @@ void Demo_RelayTest(void)
 }
 
 /*
- * Simple failover demo:
- * - Reads line voltage via ZMPT.
- * - Switches from MAIN to GEN when line is outside [108, 132] V RMS
- *   for more than 500 ms.
- * - Switches back to MAIN when line is inside [117, 123] V RMS
- *   for more than 2000 ms.
- * - Drives RELAY_MAIN / RELAY_GEN / RELAY_TRANSFER accordingly.
- */
-void Demo_Failover(void)
-{
-    typedef enum {
-        SRC_MAIN = 0,
-        SRC_GEN  = 1
-    } SourceState;
-
-    static SourceState src = SRC_MAIN;
-    static uint32_t badStartTick  = 0;
-    static uint32_t goodStartTick = 0;
-    static uint32_t lastPrint     = 0;
-
-    uint32_t now = HAL_GetTick();
-
-    // Measure voltage every call (could be throttled if needed)
-    float v_ac_rms  = get_ac_rms(4000);
-    float line_vrms = v_ac_rms * lineScaleFactor;
-    if (line_vrms < 5.0f)
-        line_vrms = 0.0f;
-
-    int mainOn     = 0;
-    int genOn      = 0;
-    int transferOn = 0;
-
-    // MAIN vs GEN logic
-    if (src == SRC_MAIN)
-    {
-        // MAIN considered "bad" if out of [108,132]
-        if (line_vrms < 108.0f || line_vrms > 132.0f)
-        {
-            if (badStartTick == 0)
-                badStartTick = now;
-            if (now - badStartTick >= 500) // 0.5 s bad
-            {
-                uart_printf("Failover: MAIN voltage out of range (%.1f V). Switching to GEN.\r\n",
-                            line_vrms);
-                // GEN + TRANSFER ON
-                src = SRC_GEN;
-                badStartTick  = 0;
-                goodStartTick = 0;
-            }
-        }
-        else
-        {
-            badStartTick = 0;
-        }
-    }
-    else // SRC_GEN
-    {
-        // MAIN considered "good" if within [117,123] for at least 2 seconds
-        if (line_vrms >= 117.0f && line_vrms <= 123.0f)
-        {
-            if (goodStartTick == 0)
-                goodStartTick = now;
-            if (now - goodStartTick >= 2000) // 2 s good
-            {
-                uart_printf("Failover: MAIN voltage stable (%.1f V). Switching back to MAIN.\r\n",
-                            line_vrms);
-                src = SRC_MAIN;
-                badStartTick  = 0;
-                goodStartTick = 0;
-            }
-        }
-        else
-        {
-            goodStartTick = 0;
-        }
-    }
-
-    // Drive relays based on chosen source
-    if (src == SRC_MAIN)
-    {
-        mainOn     = 1;
-        genOn      = 0;
-        transferOn = 0;
-        Relay_MainOn();
-    }
-    else
-    {
-        mainOn     = 0;
-        genOn      = 1;
-        transferOn = 1;
-        Relay_GenOn();
-        Relay_TransferOn();
-    }
-
-    // Pretty status print every 1s
-    if (now - lastPrint >= 1000)
-    {
-        lastPrint = now;
-
-        uart_printf(
-            "+-------------------------------------------+\r\n"
-            "|        AUTO SWITCH DEMO: STATUS           |\r\n"
-            "+-------------------------------------------+\r\n"
-            "| Line Voltage: %6.1f V RMS                 |\r\n"
-            "| Source: %s                                |\r\n"
-            "| MAIN Relay:     %s                        |\r\n"
-            "| GEN Relay:      %s                        |\r\n"
-            "| TRANSFER Relay: %s                        |\r\n"
-            "+-------------------------------------------+\r\n",
-            line_vrms,
-            (src == SRC_MAIN) ? "MAIN" : "GEN ",
-            mainOn     ? "ON " : "OFF",
-            genOn      ? "ON " : "OFF",
-            transferOn ? "ON " : "OFF"
-        );
-    }
-}
-
-/*
- * GenSim: STARTUP sequence
+ * GenSim_Update(requestRun)
+ *
+ * requestRun = 1 → we WANT the generator running
+ *   - if currently idle/stopped, runs startup animation:
+ *       S1 ON (1s), then S1+S2 crank blink (3s), then S3 ON = RUNNING
+ *   - then stays in RUNNING S3 as long as requestRun stays 1
+ *
+ * requestRun = 0 → we WANT the generator stopped
+ *   - if currently running, runs shutdown animation:
+ *       S1+S3 ON (1s), then S1+S3 with S2 blink (3s), then all OFF = STOPPED
+ *   - then stays in STOPPED as long as requestRun stays 0
  *
  * Returns:
- *   0 -> still running sequence
- *   1 -> sequence finished (S3 ON, generator "running")
+ *   1 → GenSim is in RUNNING S3 (generator “up”)
+ *   0 → any other state (idle, starting, shutting down, stopped)
  */
-static uint8_t GenSim_RunStartup(void)
+uint8_t GenSim_Update(uint8_t requestRun)
 {
     typedef enum {
-        GS_START_IDLE = 0,
-        GS_START_S1_ACTIVE,
+        GS_IDLE = 0,
+        GS_START_S1,
         GS_START_CRANK,
-        GS_START_DONE
-    } GenSimStartState;
+        GS_RUNNING,
+        GS_SHUT_S1,
+        GS_SHUT_COOLDOWN,
+        GS_STOPPED
+    } GenSimState_t;
 
-    static GenSimStartState s = GS_START_IDLE;
+    static GenSimState_t s = GS_IDLE;
     static uint32_t stateStartTick = 0;
     static uint32_t lastBlinkTick  = 0;
     static uint8_t  s2On           = 0;
@@ -443,229 +345,386 @@ static uint8_t GenSim_RunStartup(void)
 
     switch (s)
     {
-        case GS_START_IDLE:
-            // First entry: start the sequence
+        case GS_IDLE:
             Status_AllOff();
-            Status_Set(1, 0, 0);   // S1 ON
-            stateStartTick = now;
-            uart_printf("GenSim: start sequence requested\r\n");
-            s = GS_START_S1_ACTIVE;
-            return 0;
+            g_GenSimStatus = GSTAT_IDLE;
 
-        case GS_START_S1_ACTIVE:
-            // S1 ON for 1 s
+            if (requestRun)
+            {
+                Status_Set(1, 0, 0);               // S1 ON
+                g_GenSimStatus = GSTAT_STARTUP_S1;
+                stateStartTick = now;
+                s = GS_START_S1;
+                uart_printf("GenSim: STARTUP requested\r\n");
+            }
+            break;
+
+        case GS_START_S1:
             Status_Set(1, 0, 0);
+            g_GenSimStatus = GSTAT_STARTUP_S1;
+
+            if (!requestRun)
+            {
+                Status_AllOff();
+                g_GenSimStatus = GSTAT_STOPPED;
+                s = GS_STOPPED;
+                break;
+            }
+
             if (now - stateStartTick >= GENSIM_STARTUP_S1_TIME_MS)
             {
-                // Move to crank (S2 blinking)
                 s2On = 0;
-                lastBlinkTick = now;
+                lastBlinkTick  = now;
                 stateStartTick = now;
-                uart_printf("GenSim: crank phase (S2 blink)\r\n");
+                g_GenSimStatus = GSTAT_STARTUP_CRANK;
                 s = GS_START_CRANK;
+                uart_printf("GenSim: crank phase (S2 blink)\r\n");
             }
-            return 0;
+            break;
 
         case GS_START_CRANK:
-            // S1 ON, S2 blinking, S3 OFF
+            if (!requestRun)
+            {
+                Status_AllOff();
+                g_GenSimStatus = GSTAT_STOPPED;
+                s = GS_STOPPED;
+                break;
+            }
+
             if (now - lastBlinkTick >= GENSIM_BLINK_PERIOD_MS)
             {
                 s2On = !s2On;
                 lastBlinkTick = now;
             }
             Status_Set(1, s2On, 0);
+            g_GenSimStatus = GSTAT_STARTUP_CRANK;
 
-            // After crank time, generator is running
             if (now - stateStartTick >= GENSIM_STARTUP_CRANK_TIME_MS)
             {
-                // S3 ON, others OFF
                 Status_Set(0, 0, 1);
-                uart_printf("GenSim: generator running (S3 ON)\r\n");
-                s = GS_START_DONE;
+                g_GenSimStatus = GSTAT_RUNNING;
+                stateStartTick = now;
+                s = GS_RUNNING;
+                uart_printf("GenSim: generator RUNNING (S3 ON)\r\n");
             }
-            return 0;
+            break;
 
-        case GS_START_DONE:
-            // Final state: S3 ON only
+        case GS_RUNNING:
             Status_Set(0, 0, 1);
-            // Reset internal state for next time
-            s = GS_START_IDLE;
-            return 1;
+            g_GenSimStatus = GSTAT_RUNNING;
 
-        default:
-            s = GS_START_IDLE;
-            return 1;
-    }
-}
+            if (!requestRun)
+            {
+                Status_Set(1, 0, 1);   // S1 + S3 ON
+                g_GenSimStatus = GSTAT_SHUT_S1;
+                stateStartTick = now;
+                s = GS_SHUT_S1;
+                uart_printf("GenSim: SHUTDOWN requested\r\n");
+            }
+            break;
 
-/*
- * GenSim: SHUTDOWN sequence
- *
- * Returns:
- *   0 -> still running sequence
- *   1 -> sequence finished (all S1/S2/S3 OFF)
- *
- * Behavior (your requested version):
- *  - S1 solid ON for 1 s (shutdown requested), S3 still ON.
- *  - S2 blinking for 3 s as cooldown indicator, S1 stays ON, S3 stays ON.
- *  - Then all OFF (generator stopped).
- */
-static uint8_t GenSim_RunShutdown(void)
-{
-    typedef enum {
-        GS_SHUT_IDLE = 0,
-        GS_SHUT_S1_SOLID,
-        GS_SHUT_S2_BLINK,
-        GS_SHUT_DONE
-    } GenSimShutState;
-
-    static GenSimShutState s = GS_SHUT_IDLE;
-    static uint32_t stateStartTick = 0;
-    static uint32_t lastBlinkTick  = 0;
-    static uint8_t  s2On           = 0;
-
-    uint32_t now = HAL_GetTick();
-
-    switch (s)
-    {
-        case GS_SHUT_IDLE:
-            // Assume generator is running (S3 ON).
-            // Begin shutdown: S1 solid ON, S2 off, S3 stays ON.
+        case GS_SHUT_S1:
             Status_Set(1, 0, 1);
-            uart_printf("GenSim: shutdown requested\r\n");
-            stateStartTick = now;
-            s = GS_SHUT_S1_SOLID;
-            return 0;
+            g_GenSimStatus = GSTAT_SHUT_S1;
 
-        case GS_SHUT_S1_SOLID:
-            // S1 solid for 1 s, S3 still ON
-            Status_Set(1, 0, 1);
+            if (requestRun)
+            {
+                Status_Set(0, 0, 1);
+                g_GenSimStatus = GSTAT_RUNNING;
+                s = GS_RUNNING;
+                break;
+            }
+
             if (now - stateStartTick >= GENSIM_SHUT_S1_SOLID_TIME_MS)
             {
-                // Start cooldown: S2 blinking, S1 stays ON, S3 stays ON
                 s2On = 0;
-                lastBlinkTick = now;
+                lastBlinkTick  = now;
                 stateStartTick = now;
-                uart_printf("GenSim: shutdown cooldown (S2 blink)\r\n");
-                s = GS_SHUT_S2_BLINK;
+                g_GenSimStatus = GSTAT_SHUT_COOLDOWN;
+                s = GS_SHUT_COOLDOWN;
+                uart_printf("GenSim: cooldown (S2 blink)\r\n");
             }
-            return 0;
+            break;
 
-        case GS_SHUT_S2_BLINK:
-            // S2 blinking, S1 stays ON, S3 stays ON
+        case GS_SHUT_COOLDOWN:
+            if (requestRun)
+            {
+                Status_Set(0, 0, 1);
+                g_GenSimStatus = GSTAT_RUNNING;
+                s = GS_RUNNING;
+                break;
+            }
+
             if (now - lastBlinkTick >= GENSIM_BLINK_PERIOD_MS)
             {
                 s2On = !s2On;
                 lastBlinkTick = now;
             }
             Status_Set(1, s2On, 1);
+            g_GenSimStatus = GSTAT_SHUT_COOLDOWN;
 
             if (now - stateStartTick >= GENSIM_SHUT_S2_BLINK_TIME_MS)
             {
-                // Cooldown complete — turn off everything.
                 Status_AllOff();
-                uart_printf("GenSim: generator stopped\r\n");
-                s = GS_SHUT_DONE;
+                g_GenSimStatus = GSTAT_STOPPED;
+                s = GS_STOPPED;
+                uart_printf("GenSim: generator STOPPED\r\n");
             }
-            return 0;
+            break;
 
-        case GS_SHUT_DONE:
+        case GS_STOPPED:
             Status_AllOff();
-            // Reset for next use
-            s = GS_SHUT_IDLE;
-            return 1;
+            g_GenSimStatus = GSTAT_STOPPED;
+
+            if (requestRun)
+            {
+                Status_Set(1, 0, 0);               // S1 ON
+                g_GenSimStatus = GSTAT_STARTUP_S1;
+                stateStartTick = now;
+                s = GS_START_S1;
+                uart_printf("GenSim: STARTUP requested (from STOPPED)\r\n");
+            }
+            break;
 
         default:
-            s = GS_SHUT_IDLE;
-            return 1;
+            s = GS_IDLE;
+            Status_AllOff();
+            g_GenSimStatus = GSTAT_IDLE;
+            break;
     }
+
+    return (g_GenSimStatus == GSTAT_RUNNING);
 }
 
 /*
- * Demo_GenSim:
- * - Waits 5 s
- * - Runs STARTUP sequence (S1 → S2 blink → S3)
- * - Holds RUNNING (S3 ON) for 5 s
- * - Runs SHUTDOWN sequence (S1 solid → S2 blink → all off)
- * - Loops forever
+ * Standalone GenSim demo (just loops startup → hold → shutdown).
  */
-void Demo_GenSim(void)
+void Demo_GenSimOnly(void)
 {
-    typedef enum {
-        GENSIM_DEMO_WAIT_STARTUP = 0,
-        GENSIM_DEMO_DO_STARTUP,
-        GENSIM_DEMO_RUNNING_HOLD,
-        GENSIM_DEMO_DO_SHUTDOWN
-    } GenSimDemoState;
-
-    static GenSimDemoState demoState = GENSIM_DEMO_WAIT_STARTUP;
-    static uint32_t phaseStartTick   = 0;
-
+    static uint8_t wantRun     = 0;
+    static uint32_t lastToggle = 0;
     uint32_t now = HAL_GetTick();
 
-    switch (demoState)
+    // Toggle desired state every 8 seconds for demo
+    if (now - lastToggle >= 8000)
     {
-        case GENSIM_DEMO_WAIT_STARTUP:
-            // Idle, all status LEDs off
-            Status_AllOff();
-            if (phaseStartTick == 0)
-            {
-                phaseStartTick = now;  // start delay timer
-            }
-
-            if (now - phaseStartTick >= GENSIM_DEMO_DELAY_MS)
-            {
-                uart_printf("GenSim demo: starting STARTUP sequence\r\n");
-                phaseStartTick = 0;  // reset for next use
-                demoState = GENSIM_DEMO_DO_STARTUP;
-            }
-            break;
-
-        case GENSIM_DEMO_DO_STARTUP:
-            if (GenSim_RunStartup())
-            {
-                // Startup finished: generator is running (S3 ON)
-                uart_printf("GenSim demo: STARTUP complete, generator running\r\n");
-                phaseStartTick = now;
-                demoState = GENSIM_DEMO_RUNNING_HOLD;
-            }
-            break;
-
-        case GENSIM_DEMO_RUNNING_HOLD:
-            // Keep S3 ON to represent running
-            Status_Set(0, 0, 1);
-
-            if (now - phaseStartTick >= GENSIM_DEMO_DELAY_MS)
-            {
-                uart_printf("GenSim demo: starting SHUTDOWN sequence\r\n");
-                phaseStartTick = 0;
-                demoState = GENSIM_DEMO_DO_SHUTDOWN;
-            }
-            break;
-
-        case GENSIM_DEMO_DO_SHUTDOWN:
-            if (GenSim_RunShutdown())
-            {
-                uart_printf("GenSim demo: SHUTDOWN complete, generator stopped\r\n");
-                phaseStartTick = now;
-                // Loop back to the start so the demo repeats:
-                demoState = GENSIM_DEMO_WAIT_STARTUP;
-            }
-            break;
-
-        default:
-            demoState = GENSIM_DEMO_WAIT_STARTUP;
-            phaseStartTick = 0;
-            break;
+        lastToggle = now;
+        wantRun = !wantRun;
+        uart_printf("Demo_GenSimOnly: wantRun = %d\r\n", wantRun);
     }
+
+    GenSim_Update(wantRun);
 }
 
 /*
- * Placeholder: FINAL / COMBINED PROJECT DEMO.
+ * FINAL ATS DEMO:
+ * - Watches line voltage and switches MAIN ↔ GEN with delays.
+ * - Uses GenSim_Update() to animate generator start/stop on LED_S1/S2/S3.
+ * - Drives RELAY_MAIN / RELAY_GEN / RELAY_TRANSFER.
  */
 void Demo_FinalCombined(void)
 {
-    // TODO: call Failover + GenSim + monitoring + any final display behavior here
+    typedef enum {
+        ATS_MAIN = 0,     // load on MAIN
+        ATS_TO_GEN,       // transitioning MAIN → GEN
+        ATS_GEN,          // load on GEN
+        ATS_TO_MAIN       // transitioning GEN → MAIN
+    } AtsState_t;
+
+    static AtsState_t atsState       = ATS_MAIN;
+    static uint32_t   badStartTick   = 0;
+    static uint32_t   goodStartTick  = 0;
+    static uint32_t   transStartTick = 0;
+    static uint32_t   lastPrint      = 0;
+
+    uint32_t now = HAL_GetTick();
+
+    // Measure line voltage
+    float v_ac_rms  = get_ac_rms(12000);
+    float line_vrms = v_ac_rms * lineScaleFactor;
+    if (line_vrms < 5.0f)
+        line_vrms = 0.0f;
+
+    // This flag tells GenSim whether gen "should" be running
+    uint8_t requestGenRun = 0;
+
+    switch (atsState)
+    {
+        case ATS_MAIN:
+            Relay_MainOn();
+            requestGenRun = 0;
+
+            // Detect bad mains (<108 or >132) for >500 ms
+            if (line_vrms < 108.0f || line_vrms > 132.0f)
+            {
+                if (badStartTick == 0)
+                    badStartTick = now;
+
+                if (now - badStartTick >= 500)
+                {
+                    uart_printf("ATS: MAIN voltage out of range (%.1f V).\r\n", line_vrms);
+                    uart_printf("ATS: Transitioning to GEN.\r\n");
+
+                    Relay_AllOff();
+                    transStartTick = now;
+                    atsState = ATS_TO_GEN;
+
+                    badStartTick  = 0;
+                    goodStartTick = 0;
+                }
+            }
+            else
+            {
+                badStartTick = 0;
+            }
+            break;
+
+        case ATS_TO_GEN:
+            // We WANT generator running; GenSim will animate startup
+            requestGenRun = 1;
+
+            // 0–1000 ms: all OFF
+            // 1000–2000 ms: GEN ON only
+            // >=2000 ms: GEN + TRANSFER ON → load on GEN
+            if (now - transStartTick < 1000)
+            {
+                Relay_AllOff();
+            }
+            else if (now - transStartTick < 2000)
+            {
+                Relay_GenOn();
+                HAL_GPIO_WritePin(RELAY_TRANSFER_GPIO_Port, RELAY_TRANSFER_Pin, GPIO_PIN_RESET);
+            }
+            else
+            {
+                Relay_GenOn();
+                Relay_TransferOn();
+                atsState = ATS_GEN;
+                uart_printf("ATS: Load now on GEN.\r\n");
+            }
+            break;
+
+        case ATS_GEN:
+            Relay_GenOn();
+            Relay_TransferOn();
+            requestGenRun = 1;
+
+            // Look for good mains in tight window [117,123] for 2 seconds
+            if (line_vrms >= 115.0f && line_vrms <= 125.0f)
+            {
+                if (goodStartTick == 0)
+                    goodStartTick = now;
+
+                if (now - goodStartTick >= 2000)
+                {
+                    uart_printf("ATS: MAIN voltage stable (%.1f V).\r\n", line_vrms);
+                    uart_printf("ATS: Transitioning back to MAIN.\r\n");
+
+                    // Remove load from generator first
+                    HAL_GPIO_WritePin(RELAY_TRANSFER_GPIO_Port, RELAY_TRANSFER_Pin, GPIO_PIN_RESET);
+
+                    transStartTick = now;
+                    atsState = ATS_TO_MAIN;
+
+                    badStartTick  = 0;
+                    goodStartTick = 0;
+                }
+            }
+            else
+            {
+                goodStartTick = 0;
+            }
+            break;
+
+        case ATS_TO_MAIN:
+            // During transition back, we no longer want gen running
+            requestGenRun = 0;
+
+            // 0–1000 ms: GEN ON (cooldown), TRANSFER OFF
+            // 1000–2000 ms: GEN OFF, all open
+            // >=2000 ms: MAIN ON
+            if (now - transStartTick < 1000)
+            {
+                Relay_GenOn();
+                HAL_GPIO_WritePin(RELAY_TRANSFER_GPIO_Port, RELAY_TRANSFER_Pin, GPIO_PIN_RESET);
+                HAL_GPIO_WritePin(RELAY_MAIN_GPIO_Port,     RELAY_MAIN_Pin,     GPIO_PIN_RESET);
+            }
+            else if (now - transStartTick < 2000)
+            {
+                Relay_AllOff();
+            }
+            else
+            {
+                Relay_MainOn();
+                atsState = ATS_MAIN;
+                uart_printf("ATS: Load returned to MAIN.\r\n");
+            }
+            break;
+
+        default:
+            atsState = ATS_MAIN;
+            Relay_AllOff();
+            Relay_MainOn();
+            requestGenRun = 0;
+            badStartTick  = 0;
+            goodStartTick = 0;
+            break;
+    }
+
+    // Update GenSim LEDs (purely visual, never blocks ATS)
+    GenSim_Update(requestGenRun);
+
+    // Periodic UART status (once per 2 seconds)
+    if (now - lastPrint >= 2000)
+    {
+        lastPrint = now;
+
+        int mainOn     = (HAL_GPIO_ReadPin(RELAY_MAIN_GPIO_Port,     RELAY_MAIN_Pin)     == GPIO_PIN_SET);
+        int genOn      = (HAL_GPIO_ReadPin(RELAY_GEN_GPIO_Port,      RELAY_GEN_Pin)      == GPIO_PIN_SET);
+        int transferOn = (HAL_GPIO_ReadPin(RELAY_TRANSFER_GPIO_Port, RELAY_TRANSFER_Pin) == GPIO_PIN_SET);
+
+        const char *srcStr;
+        switch (atsState)
+        {
+            case ATS_MAIN:     srcStr = "MAIN"; break;
+            case ATS_GEN:      srcStr = "GEN "; break;
+            case ATS_TO_GEN:	srcStr = "TRAN"; break;
+            case ATS_TO_MAIN:  srcStr = "TRAN"; break;
+            default:           srcStr = "MIX?"; break;
+        }
+
+        const char *genSimStr;
+        switch (g_GenSimStatus)
+        {
+            case GSTAT_IDLE:            genSimStr = "IDLE"; break;
+            case GSTAT_STARTUP_S1:      genSimStr = "STARTUP S1"; break;
+            case GSTAT_STARTUP_CRANK:   genSimStr = "CRANK S2"; break;
+            case GSTAT_RUNNING:         genSimStr = "RUNNING S3"; break;
+            case GSTAT_SHUT_S1:         genSimStr = "SHUTDOWN S1"; break;
+            case GSTAT_SHUT_COOLDOWN:   genSimStr = "COOLDOWN S2"; break;
+            case GSTAT_STOPPED:         genSimStr = "STOPPED"; break;
+            default:                    genSimStr = "UNKNOWN"; break;
+        }
+
+        uart_printf(
+            "+-------------------------------------------+\r\n"
+            "|        FINAL ATS DEMO: STATUS             |\r\n"
+            "+-------------------------------------------+\r\n"
+            "| Line Voltage: %6.1f V RMS                 |\r\n"
+            "| Source: %-4s                              |\r\n"
+            "| MAIN Relay:     %s                        |\r\n"
+            "| GEN Relay:      %s                        |\r\n"
+            "| TRANSFER Relay: %s                        |\r\n"
+            "| GenSim Status:  %-13s           |\r\n"
+            "+-------------------------------------------+\r\n",
+            line_vrms,
+            srcStr,
+            mainOn     ? "ON " : "OFF",
+            genOn      ? "ON " : "OFF",
+            transferOn ? "ON " : "OFF",
+            genSimStr
+        );
+    }
 }
 
 /* USER CODE END 0 */
@@ -703,12 +762,11 @@ int main(void)
   MX_ADC1_Init();
   /* USER CODE BEGIN 2 */
   uart_printf("System started.\r\n");
-  uart_printf("Demo config: V=%d, R=%d, F=%d, G=%d, C=%d\r\n",
+  uart_printf("Demo config: V=%d, R=%d, G=%d, F=%d\r\n",
               DEMO_VOLTAGE_TEST,
               DEMO_RELAY_TEST,
-              DEMO_FAILOVER,
-              DEMO_GENSIM,
-              DEMO_FINAL_COMBINED);
+              DEMO_GENSIM_ONLY,
+              DEMO_FINAL_ATS);
 
   // Grab initial button state for edge detection demo
   lastButtonState = HAL_GPIO_ReadPin(B1_GPIO_Port, B1_Pin);
@@ -719,6 +777,7 @@ int main(void)
   // Ensure status LEDs and relay drivers start in a known OFF state
   Status_AllOff();
   Relay_AllOff();
+  Relay_MainOn();   // default: on mains
 
   /* USER CODE END 2 */
 
@@ -731,34 +790,25 @@ int main(void)
      *
      * - Demo_ButtonLed() can safely run in all modes
      *   (just watches the blue button and toggles LD2).
-     * - Enable exactly ONE of the DEMO_* main modes at the top.
+     * - Enable exactly ONE of the main DEMO_* modes at the top.
      */
 
     // Keep the button → LD2 demo active in all modes
     Demo_ButtonLed();
 
 #if DEMO_VOLTAGE_TEST
-    // ZMPT + RMS UART demo
     Demo_Voltage();
 #endif
 
 #if DEMO_RELAY_TEST
-    // Relay-only pattern using LEDs on RELAY_* pins
     Demo_RelayTest();
 #endif
 
-#if DEMO_FAILOVER
-    // Automatic failover demo (MAIN ↔ GEN) using relays and voltage
-    Demo_Failover();
+#if DEMO_GENSIM_ONLY
+    Demo_GenSimOnly();
 #endif
 
-#if DEMO_GENSIM
-    // Generator simulator LED-only startup/shutdown demo
-    Demo_GenSim();
-#endif
-
-#if DEMO_FINAL_COMBINED
-    // Final combined project behavior (future)
+#if DEMO_FINAL_ATS
     Demo_FinalCombined();
 #endif
 
@@ -869,12 +919,12 @@ static void MX_ADC1_Init(void)
 
   /** Configure Regular Channel
   */
-  sConfig.Channel = ADC_CHANNEL_5;         // PA0 / IN5 for ZMPT
-  sConfig.Rank = ADC_REGULAR_RANK_1;
+  sConfig.Channel      = ADC_CHANNEL_5;         // PA0 / IN5 for ZMPT
+  sConfig.Rank         = ADC_REGULAR_RANK_1;
   sConfig.SamplingTime = ADC_SAMPLETIME_2CYCLES_5;
-  sConfig.SingleDiff = ADC_SINGLE_ENDED;
+  sConfig.SingleDiff   = ADC_SINGLE_ENDED;
   sConfig.OffsetNumber = ADC_OFFSET_NONE;
-  sConfig.Offset = 0;
+  sConfig.Offset       = 0;
   if (HAL_ADC_ConfigChannel(&hadc1, &sConfig) != HAL_OK)
   {
     Error_Handler();
@@ -900,13 +950,13 @@ static void MX_USART2_UART_Init(void)
   /* USER CODE BEGIN USART2_Init 1 */
 
   /* USER CODE END USART2_Init 1 */
-  huart2.Instance = USART2;
-  huart2.Init.BaudRate = 115200;
-  huart2.Init.WordLength = UART_WORDLENGTH_8B;
-  huart2.Init.StopBits = UART_STOPBITS_1;
-  huart2.Init.Parity = UART_PARITY_NONE;
-  huart2.Init.Mode = UART_MODE_TX_RX;
-  huart2.Init.HwFlowCtl = UART_HWCONTROL_NONE;
+  huart2.Instance          = USART2;
+  huart2.Init.BaudRate     = 115200;
+  huart2.Init.WordLength   = UART_WORDLENGTH_8B;
+  huart2.Init.StopBits     = UART_STOPBITS_1;
+  huart2.Init.Parity       = UART_PARITY_NONE;
+  huart2.Init.Mode         = UART_MODE_TX_RX;
+  huart2.Init.HwFlowCtl    = UART_HWCONTROL_NONE;
   huart2.Init.OverSampling = UART_OVERSAMPLING_16;
   huart2.Init.OneBitSampling = UART_ONE_BIT_SAMPLE_DISABLE;
   huart2.AdvancedInit.AdvFeatureInit = UART_ADVFEATURE_NO_INIT;
@@ -914,9 +964,9 @@ static void MX_USART2_UART_Init(void)
   {
     Error_Handler();
   }
-  /* USER CODE BEGIN_USART2_Init 2 */
+  /* USER CODE BEGIN USART2_Init 2 */
 
-  /* USER CODE END_USART2_Init 2 */
+  /* USER CODE END USART2_Init 2 */
 
 }
 
@@ -945,22 +995,22 @@ static void MX_GPIO_Init(void)
   HAL_GPIO_WritePin(GPIOB, LED_PWR_Pin|LED_S1_Pin|LED_S2_Pin|LED_S3_Pin, GPIO_PIN_RESET);
 
   /*Configure GPIO pin : B1_Pin */
-  GPIO_InitStruct.Pin = B1_Pin;
+  GPIO_InitStruct.Pin  = B1_Pin;
   GPIO_InitStruct.Mode = GPIO_MODE_INPUT;  // polling mode, no interrupt
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   HAL_GPIO_Init(B1_GPIO_Port, &GPIO_InitStruct);
 
   /*Configure GPIO pins : LD2_Pin RELAY_MAIN_Pin RELAY_GEN_Pin RELAY_TRANSFER_Pin */
-  GPIO_InitStruct.Pin = LD2_Pin|RELAY_MAIN_Pin|RELAY_GEN_Pin|RELAY_TRANSFER_Pin;
-  GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
-  GPIO_InitStruct.Pull = GPIO_NOPULL;
+  GPIO_InitStruct.Pin   = LD2_Pin|RELAY_MAIN_Pin|RELAY_GEN_Pin|RELAY_TRANSFER_Pin;
+  GPIO_InitStruct.Mode  = GPIO_MODE_OUTPUT_PP;
+  GPIO_InitStruct.Pull  = GPIO_NOPULL;
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
   HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
 
   /*Configure GPIO pins : LED_PWR_Pin LED_S1_Pin LED_S2_Pin LED_S3_Pin */
-  GPIO_InitStruct.Pin = LED_PWR_Pin|LED_S1_Pin|LED_S2_Pin|LED_S3_Pin;
-  GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
-  GPIO_InitStruct.Pull = GPIO_NOPULL;
+  GPIO_InitStruct.Pin   = LED_PWR_Pin|LED_S1_Pin|LED_S2_Pin|LED_S3_Pin;
+  GPIO_InitStruct.Mode  = GPIO_MODE_OUTPUT_PP;
+  GPIO_InitStruct.Pull  = GPIO_NOPULL;
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
   HAL_GPIO_Init(GPIOB, &GPIO_InitStruct);
 
@@ -968,6 +1018,10 @@ static void MX_GPIO_Init(void)
   // Additional GPIO user init (if needed) can go here.
   /* USER CODE END MX_GPIO_Init_2 */
 }
+
+/* USER CODE BEGIN 4 */
+/* extra helper functions if needed are already above */
+/* USER CODE END 4 */
 
 /**
   * @brief  This function is executed in case of error occurrence.
