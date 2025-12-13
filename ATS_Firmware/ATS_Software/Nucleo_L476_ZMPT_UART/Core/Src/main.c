@@ -50,7 +50,7 @@ typedef enum
 const uint16_t ADC_OFFSET = 3080;
 
 // From calibration: ~0.61 Vrms at module OUT when line is 120 Vrms.
-// 120 / 0.61 ≈ 196.7 → tuned to 185.5f for your setup.
+// 120 / 0.61 ≈ 196.7 → tuned to 185.5f for our setup.
 const float lineScaleFactor = 185.5f;      // converts module Vrms -> line Vrms
 
 // GenSim timing constants (ms)
@@ -431,7 +431,7 @@ void ATS_Task(void)
     // Measure line voltage
     float v_ac_rms  = get_ac_rms(12000);
     float line_vrms = v_ac_rms * lineScaleFactor;
-    if (line_vrms < 5.0f)
+    if (line_vrms < 20.0f)//when below 20v voltage is negligable
         line_vrms = 0.0f;
 
     // This flag tells GenSim whether gen "should" be running
