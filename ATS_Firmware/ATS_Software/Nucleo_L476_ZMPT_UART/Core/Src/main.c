@@ -50,7 +50,7 @@ typedef enum
 const uint16_t ADC_OFFSET = 3080;
 
 // From calibration: ~0.61 Vrms at module OUT when line is 120 Vrms.
-// 120 / 0.61 ≈ 196.7 → tuned to 185.5f for our setup.
+// 120 / 0.61 = 196.7 -> tuned to 185.5f for our setup.
 const float lineScaleFactor = 185.5f;      // converts module Vrms -> line Vrms
 
 // GenSim timing constants (ms)
@@ -73,7 +73,7 @@ UART_HandleTypeDef huart2;
 
 /* USER CODE BEGIN PV */
 
-// Button → LD2 state for the button demo
+// Button -> LD2 state for the button demo
 uint8_t  lastButtonState = GPIO_PIN_SET;   // assume not pressed at start
 uint8_t  ledState        = 0;              // LED off
 
@@ -105,7 +105,7 @@ uint8_t GenSim_Update(uint8_t requestRun);
 
 void uart_printf(const char *fmt, ...)
 {
-    char buffer[512];
+    char buffer[512]; //adjust if uart isn't printing full message
     va_list args;
     va_start(args, fmt);
     int len = vsnprintf(buffer, sizeof(buffer), fmt, args);
@@ -222,12 +222,12 @@ static void Status_Set(uint8_t s1, uint8_t s2, uint8_t s3)
 /*
  * GenSim_Update(requestRun)
  *
- * requestRun = 1 → we WANT the generator running
- * requestRun = 0 → we WANT the generator stopped
+ * requestRun = 1 -> we WANT the generator running
+ * requestRun = 0 -> we WANT the generator stopped
  *
  * Returns:
- *   1 → GenSim is in RUNNING S3 (generator “up”)
- *   0 → any other state
+ *   1 -> GenSim is in RUNNING S3 (generator “up”)
+ *   0 -> any other state
  */
 uint8_t GenSim_Update(uint8_t requestRun)
 {
@@ -405,7 +405,7 @@ uint8_t GenSim_Update(uint8_t requestRun)
 
 /*
  * ATS_Task:
- * - Watches line voltage and switches MAIN ↔ GEN with delays.
+ * - Watches line voltage and switches MAIN <-> GEN with delays.
  * - Uses GenSim_Update() to animate generator start/stop on LED_S1/S2/S3.
  * - Drives RELAY_MAIN / RELAY_GEN / RELAY_TRANSFER.
  * - Ensures GEN & TRANSFER are both blocked until GenSim reports RUNNING.
@@ -414,9 +414,9 @@ void ATS_Task(void)
 {
     typedef enum {
         ATS_MAIN = 0,     // load on MAIN
-        ATS_TO_GEN,       // transitioning MAIN → GEN
+        ATS_TO_GEN,       // transitioning MAIN -> GEN
         ATS_GEN,          // load on GEN
-        ATS_TO_MAIN       // transitioning GEN → MAIN
+        ATS_TO_MAIN       // transitioning GEN -> MAIN
     } AtsState_t;
 
     static AtsState_t atsState       = ATS_MAIN;
@@ -429,7 +429,7 @@ void ATS_Task(void)
     uint32_t now = HAL_GetTick();
 
     // Measure line voltage
-    float v_ac_rms  = get_ac_rms(12000);
+    float v_ac_rms  = get_ac_rms(12000); //12000 samples
     float line_vrms = v_ac_rms * lineScaleFactor;
     if (line_vrms < 20.0f)//when below 20v voltage is negligable
         line_vrms = 0.0f;
@@ -470,7 +470,7 @@ void ATS_Task(void)
             break;
 
         case ATS_TO_GEN:
-            // We WANT generator running; GenSim will animate startup
+            // We want generator running; GenSim will animate startup
             requestGenRun = 1;
 
             // Step 0: let GenSim do its full startup. Until it reports RUNNING,
@@ -501,7 +501,7 @@ void ATS_Task(void)
             }
             else
             {
-                // GEN is on, TRANSFER now closes → load officially on generator
+                // GEN is on, TRANSFER now closes -> load officially on generator
                 Relay_GenOn();
                 Relay_TransferOn();
                 atsState = ATS_GEN;
