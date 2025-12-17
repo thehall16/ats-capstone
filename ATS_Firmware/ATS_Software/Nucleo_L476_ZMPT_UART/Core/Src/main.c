@@ -47,11 +47,11 @@ typedef enum
 /* USER CODE BEGIN PD */
 
 // Hard-coded ADC DC offset (midpoint) for the ZMPT output (no AC ~3080).
-const uint16_t ADC_OFFSET = 3080;
+const uint16_t ADC_OFFSET = 3080; 
 
 // From calibration: ~0.61 Vrms at module OUT when line is 120 Vrms.
 // 120 / 0.61 = 196.7 -> tuned to 185.5f for our setup.
-const float lineScaleFactor = 185.5f;      // converts module Vrms -> line Vrms
+const float lineScaleFactor = 185.5f;      // converts module Vrms -> line Vrms : 
 
 // GenSim timing constants (ms)
 #define GENSIM_STARTUP_S1_TIME_MS       1000U   // S1 solid at start
@@ -431,7 +431,7 @@ void ATS_Task(void)
     // Measure line voltage
     float v_ac_rms  = get_ac_rms(12000); //12000 samples
     float line_vrms = v_ac_rms * lineScaleFactor;
-    if (line_vrms < 20.0f)//when below 20v voltage is negligable
+    if (line_vrms < 20.0f)//when below 20v voltage is negligable/ very inaccurate
         line_vrms = 0.0f;
 
     // This flag tells GenSim whether gen "should" be running
