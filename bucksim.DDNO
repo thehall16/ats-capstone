@@ -1,0 +1,156 @@
+********************************************************************************
+***                       Micro-Cap 12.2.0.0 (64 bit)                        ***
+***                                                                          ***
+***                                                                          ***
+***                          Dynamic DC of bucksim                           ***
+***                          12/16/2025 10:13:57 PM                          ***
+********************************************************************************
+
+*****************************************************
+***                Temperature=27                 ***
+*****************************************************
+
+Temperature=27
+
+DC Operating Point Voltages
+===========================
+Node         Voltage  Node         Voltage  Node         Voltage 
+VIN          12.000   2             0.000   3           119.688u 
+VOUT        119.688u  5            19.212u 
+
+DC Operating Point Inductor Current
+===================================
+Inductor     Current 
+L1           11.971u 
+
+
+Operating Point for Devices of Type Diode
+=========================================
+Instance:                         D1                      D2
+Using model:                  1N5817                  1N4148
+
+Capacitance Terms:
+CAP                         222.595p                  1.338p
+
+Current Terms:
+ID                          -29.136n              1.893E-028
+
+Resistance Terms:
+REQ                           4.116K                6.490MEG
+
+Voltage Terms:
+VD                         -119.688u                  0.001f
+
+Power DC Terms:
+PD                            3.487p              1.257E-046
+PS                            0.000                   0.000 
+
+DC Pin Currents:
+Id                          -29.136n              1.893E-028
+
+Condition:
+State                            OFF                     OFF
+
+Device Variables:
+area                          1.000                   1.000 
+ic                            0.000                   0.000 
+
+
+
+Operating Point for Devices of Type Resistor
+============================================
+Instance:                          R1                      R2                      R3
+V                            100.477u                 19.212u               -119.688u
+Power DC Terms:
+PD                           193.032f                 36.909f                  1.433n
+
+DC Pin Currents:
+Ir                             1.921n                  1.921n                -11.969u
+
+Device Variables:
+tc1                            0.000                   0.000                   0.000 
+tc2                            0.000                   0.000                   0.000 
+
+
+
+Operating Point for Devices of Type Inductor
+============================================
+Instance:                          L1
+V                             -0.001f
+Power DC Terms:
+PS                        -7.949E-024
+
+DC Pin Currents:
+Il                            11.971u
+
+Device Variables:
+ic                             0.000 
+
+
+
+Operating Point for Devices of Type Capacitor
+=============================================
+Instance:                          C1                      C2                      C3
+V                            -12.000                -100.477u               -119.688u
+Power DC Terms:
+PS                             0.000                   0.000                   0.000 
+
+DC Pin Currents:
+Ic                             0.000                   0.000                   0.000 
+
+Device Variables:
+ic                             0.000                   0.000                   0.000 
+
+
+Instance:                          C4
+V                           -119.688u
+Power DC Terms:
+PS                             0.000 
+
+DC Pin Currents:
+Ic                             0.000 
+
+Device Variables:
+ic                             0.000 
+
+
+
+Operating Point for Devices of Type S
+=====================================
+Instance:                          S1
+Using model:     RON005ROFF1E6VT25VH0
+Power DC Terms:
+PD                           143.997u
+
+DC Pin Currents:
+ISource                       12.000u
+
+Condition:
+State                             OFF
+
+
+
+Operating Point for Devices of Type Pulse
+=========================================
+Instance:                          V2
+Using model:          05010N10N400N2U
+V                              0.000 
+Power DC Terms:
+PG                             0.000 
+
+DC Pin Currents:
+ISource                        0.000 
+
+
+
+Operating Point for Devices of Type SPICE Source
+================================================
+Instance:                         V1
+V                            12.000 
+Power DC Terms:
+PG                          143.999u
+
+DC Pin Currents:
+ISource                     -12.000u
+
+
