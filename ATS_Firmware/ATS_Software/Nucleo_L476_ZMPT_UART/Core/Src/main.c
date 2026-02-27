@@ -24,13 +24,6 @@
 #include "gensim.h"
 #include "buttonLED.h"
 
-/* Private includes ----------------------------------------------------------*/
-/* USER CODE BEGIN Includes */
-/* (Optional) these can be removed since modules include what they need */
-//#include <stdio.h>
-//#include <stdarg.h>
-//#include <math.h>
-/* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
 /* USER CODE BEGIN PTD */
