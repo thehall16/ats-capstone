@@ -1,4 +1,5 @@
-nucleo_l476_zmpt_uart/main.o: ..\Core\Src\main.c ..\Core\Inc\main.h \
+nucleo_l476_zmpt_uart/buttonled.o: ..\Core\Src\buttonLED.c \
+  ..\Core\Inc\buttonLED.h ..\Core\Inc\main.h \
   ..\Drivers\STM32L4xx_HAL_Driver\Inc\stm32l4xx_hal.h \
   ..\Core\Inc\stm32l4xx_hal_conf.h \
   ..\Drivers\STM32L4xx_HAL_Driver\Inc\stm32l4xx_hal_rcc.h \
@@ -32,5 +33,4 @@ nucleo_l476_zmpt_uart/main.o: ..\Core\Src\main.c ..\Core\Inc\main.h \
   ..\Drivers\STM32L4xx_HAL_Driver\Inc\stm32l4xx_hal_pwr_ex.h \
   ..\Drivers\STM32L4xx_HAL_Driver\Inc\stm32l4xx_hal_uart.h \
   ..\Drivers\STM32L4xx_HAL_Driver\Inc\stm32l4xx_hal_uart_ex.h \
-  ..\Core\Inc\uart_display.h ..\Core\Inc\voltage_read.h \
-  ..\Core\Inc\ats_ctrl.h ..\Core\Inc\gensim.h ..\Core\Inc\buttonLED.h
+  ..\Core\Inc\uart_display.h

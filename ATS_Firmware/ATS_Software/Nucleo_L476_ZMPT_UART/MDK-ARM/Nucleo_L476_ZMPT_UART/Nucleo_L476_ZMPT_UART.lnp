@@ -7,6 +7,7 @@
 "nucleo_l476_zmpt_uart\uart_display.o"
 "nucleo_l476_zmpt_uart\gensim.o"
 "nucleo_l476_zmpt_uart\voltage_read.o"
+"nucleo_l476_zmpt_uart\buttonled.o"
 "nucleo_l476_zmpt_uart\stm32l4xx_hal_adc.o"
 "nucleo_l476_zmpt_uart\stm32l4xx_hal_adc_ex.o"
 "nucleo_l476_zmpt_uart\stm32l4xx_hal.o"
