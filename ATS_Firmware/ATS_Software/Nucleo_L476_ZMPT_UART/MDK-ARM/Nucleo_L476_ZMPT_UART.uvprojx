@@ -409,6 +409,46 @@
               <FileType>1</FileType>
               <FilePath>../Core/Src/stm32l4xx_hal_msp.c</FilePath>
             </File>
+            <File>
+              <FileName>ats_crtl.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\Core\Src\ats_crtl.c</FilePath>
+            </File>
+            <File>
+              <FileName>uart_display.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\Core\Src\uart_display.c</FilePath>
+            </File>
+            <File>
+              <FileName>gensim.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\Core\Src\gensim.c</FilePath>
+            </File>
+            <File>
+              <FileName>voltage_read.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\Core\Src\voltage_read.c</FilePath>
+            </File>
+            <File>
+              <FileName>uart_display.h</FileName>
+              <FileType>5</FileType>
+              <FilePath>..\Core\Inc\uart_display.h</FilePath>
+            </File>
+            <File>
+              <FileName>gensim.h</FileName>
+              <FileType>5</FileType>
+              <FilePath>..\Core\Inc\gensim.h</FilePath>
+            </File>
+            <File>
+              <FileName>ats_ctrl.h</FileName>
+              <FileType>5</FileType>
+              <FilePath>..\Core\Inc\ats_ctrl.h</FilePath>
+            </File>
+            <File>
+              <FileName>voltage_read.h</FileName>
+              <FileType>5</FileType>
+              <FilePath>..\Core\Inc\voltage_read.h</FilePath>
+            </File>
           </Files>
         </Group>
         <Group>

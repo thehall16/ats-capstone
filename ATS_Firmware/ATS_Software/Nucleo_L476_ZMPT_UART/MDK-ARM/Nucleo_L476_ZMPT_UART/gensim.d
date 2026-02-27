@@ -1,4 +1,5 @@
-nucleo_l476_zmpt_uart/main.o: ..\Core\Src\main.c ..\Core\Inc\main.h \
+nucleo_l476_zmpt_uart/gensim.o: ..\Core\Src\gensim.c ..\Core\Inc\gensim.h \
+  C:\Keil_v5\ARM\ARMCLANG\include\stdint.h ..\Core\Inc\main.h \
   ..\Drivers\STM32L4xx_HAL_Driver\Inc\stm32l4xx_hal.h \
   ..\Core\Inc\stm32l4xx_hal_conf.h \
   ..\Drivers\STM32L4xx_HAL_Driver\Inc\stm32l4xx_hal_rcc.h \
@@ -6,7 +7,6 @@ nucleo_l476_zmpt_uart/main.o: ..\Core\Src\main.c ..\Core\Inc\main.h \
   ..\Drivers\CMSIS\Device\ST\STM32L4xx\Include\stm32l4xx.h \
   ..\Drivers\CMSIS\Device\ST\STM32L4xx\Include\stm32l476xx.h \
   ..\Drivers\CMSIS\Include\core_cm4.h \
-  C:\Keil_v5\ARM\ARMCLANG\include\stdint.h \
   C:\Users\sjron\OneDrive\Documents\GitHub\ats-capstone\ATS_Firmware\ATS_Software\Nucleo_L476_ZMPT_UART\Drivers\CMSIS\Include\cmsis_version.h \
   C:\Users\sjron\OneDrive\Documents\GitHub\ats-capstone\ATS_Firmware\ATS_Software\Nucleo_L476_ZMPT_UART\Drivers\CMSIS\Include\cmsis_compiler.h \
   C:\Users\sjron\OneDrive\Documents\GitHub\ats-capstone\ATS_Firmware\ATS_Software\Nucleo_L476_ZMPT_UART\Drivers\CMSIS\Include\cmsis_armclang.h \
@@ -32,8 +32,4 @@ nucleo_l476_zmpt_uart/main.o: ..\Core\Src\main.c ..\Core\Inc\main.h \
   ..\Drivers\STM32L4xx_HAL_Driver\Inc\stm32l4xx_hal_pwr_ex.h \
   ..\Drivers\STM32L4xx_HAL_Driver\Inc\stm32l4xx_hal_uart.h \
   ..\Drivers\STM32L4xx_HAL_Driver\Inc\stm32l4xx_hal_uart_ex.h \
-  ..\Core\Inc\uart_display.h ..\Core\Inc\voltage_read.h \
-  ..\Core\Inc\ats_ctrl.h ..\Core\Inc\gensim.h \
-  C:\Keil_v5\ARM\ARMCLANG\include\stdio.h \
-  C:\Keil_v5\ARM\ARMCLANG\include\stdarg.h \
-  C:\Keil_v5\ARM\ARMCLANG\include\math.h
+  ..\Core\Inc\uart_display.h

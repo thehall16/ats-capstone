@@ -1,4 +1,5 @@
-nucleo_l476_zmpt_uart/main.o: ..\Core\Src\main.c ..\Core\Inc\main.h \
+nucleo_l476_zmpt_uart/ats_crtl.o: ..\Core\Src\ats_crtl.c \
+  ..\Core\Inc\ats_ctrl.h ..\Core\Inc\main.h \
   ..\Drivers\STM32L4xx_HAL_Driver\Inc\stm32l4xx_hal.h \
   ..\Core\Inc\stm32l4xx_hal_conf.h \
   ..\Drivers\STM32L4xx_HAL_Driver\Inc\stm32l4xx_hal_rcc.h \
@@ -33,7 +34,4 @@ nucleo_l476_zmpt_uart/main.o: ..\Core\Src\main.c ..\Core\Inc\main.h \
   ..\Drivers\STM32L4xx_HAL_Driver\Inc\stm32l4xx_hal_uart.h \
   ..\Drivers\STM32L4xx_HAL_Driver\Inc\stm32l4xx_hal_uart_ex.h \
   ..\Core\Inc\uart_display.h ..\Core\Inc\voltage_read.h \
-  ..\Core\Inc\ats_ctrl.h ..\Core\Inc\gensim.h \
-  C:\Keil_v5\ARM\ARMCLANG\include\stdio.h \
-  C:\Keil_v5\ARM\ARMCLANG\include\stdarg.h \
-  C:\Keil_v5\ARM\ARMCLANG\include\math.h
+  ..\Core\Inc\gensim.h
