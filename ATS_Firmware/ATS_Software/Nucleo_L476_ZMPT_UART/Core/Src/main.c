@@ -57,9 +57,6 @@ uint8_t  ledState        = 0;              // LED off
 
 
 
-// Flag set to 1 ONLY when GenSim is in RUNNING (S3 ON)
-uint8_t g_GenRunningFlag = 0;
-
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -71,8 +68,6 @@ static void MX_ADC1_Init(void);
 
 void ButtonLed_Task(void);     // Blue button toggles LD2 + UART print
 
-// GenSim update (non-blocking visual engine)
-uint8_t GenSim_Update(uint8_t requestRun);
 
 /* USER CODE END PFP */
 
