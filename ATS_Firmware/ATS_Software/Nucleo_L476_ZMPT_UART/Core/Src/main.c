@@ -22,27 +22,26 @@
 #include "voltage_read.h"
 #include "ats_ctrl.h"
 #include "gensim.h"
+#include "buttonLED.h"
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
-#include <stdio.h>
-#include <stdarg.h>
-#include <math.h>
+/* (Optional) these can be removed since modules include what they need */
+//#include <stdio.h>
+//#include <stdarg.h>
+//#include <math.h>
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
 /* USER CODE BEGIN PTD */
-
+/* USER CODE END PTD */
 
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
-
-
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
 /* USER CODE BEGIN PM */
-
 /* USER CODE END PM */
 
 /* Private variables ---------------------------------------------------------*/
@@ -50,13 +49,6 @@ ADC_HandleTypeDef hadc1;
 UART_HandleTypeDef huart2;
 
 /* USER CODE BEGIN PV */
-
-// Button -> LD2 state for the button demo
-uint8_t  lastButtonState = GPIO_PIN_SET;   // assume not pressed at start
-uint8_t  ledState        = 0;              // LED off
-
-
-
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -65,42 +57,10 @@ static void MX_GPIO_Init(void);
 static void MX_USART2_UART_Init(void);
 static void MX_ADC1_Init(void);
 /* USER CODE BEGIN PFP */
-
-void ButtonLed_Task(void);     // Blue button toggles LD2 + UART print
-
-
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
-
-
-
-/*
- * ButtonLed_Task:
- * Blue user button (B1) toggles the on-board LED (LD2)
- * and prints the new state over UART.
- */
-void ButtonLed_Task(void)
-{
-    uint8_t currentButton = HAL_GPIO_ReadPin(B1_GPIO_Port, B1_Pin);
-
-    // Button is active LOW on the Nucleo board
-    if (currentButton == GPIO_PIN_RESET && lastButtonState == GPIO_PIN_SET)
-    {
-        ledState = !ledState;
-
-        HAL_GPIO_WritePin(LD2_GPIO_Port, LD2_Pin,
-                          ledState ? GPIO_PIN_SET : GPIO_PIN_RESET);
-
-        uart_printf("Button pressed. LED is now %s\r\n",
-                    ledState ? "ON" : "OFF");
-    }
-
-    lastButtonState = currentButton;
-}
-
-
 /* USER CODE END 0 */
 
 /**
@@ -119,22 +79,21 @@ int main(void)
   /* USER CODE BEGIN 2 */
   uart_printf("System started.\r\n");
 
-  // Grab initial button state for edge detection demo
-  lastButtonState = HAL_GPIO_ReadPin(B1_GPIO_Port, B1_Pin);
-
-  // Power LED
+  /* Power LED */
   HAL_GPIO_WritePin(LED_PWR_GPIO_Port, LED_PWR_Pin, GPIO_PIN_SET);
 
-  // Initialize GenSim internal state + status LEDs
+  /* Initialize modules */
   GenSim_Init();
+  ButtonLED_Init();
   /* USER CODE END 2 */
 
   while (1)
   {
-    ButtonLed_Task();
+    ButtonLED_Task();
     ATS_Task();
   }
 }
+
 /**
   * @brief System Clock Configuration
   * @retval None
@@ -177,11 +136,6 @@ void SystemClock_Config(void)
   }
 }
 
-/**
-  * @brief ADC1 Initialization Function
-  * @param None
-  * @retval None
-  */
 static void MX_ADC1_Init(void)
 {
   ADC_MultiModeTypeDef multimode = {0};
@@ -213,7 +167,7 @@ static void MX_ADC1_Init(void)
     Error_Handler();
   }
 
-  sConfig.Channel      = ADC_CHANNEL_5;         // PA0 / IN5 for ZMPT
+  sConfig.Channel      = ADC_CHANNEL_5;
   sConfig.Rank         = ADC_REGULAR_RANK_1;
   sConfig.SamplingTime = ADC_SAMPLETIME_2CYCLES_5;
   sConfig.SingleDiff   = ADC_SINGLE_ENDED;
@@ -225,11 +179,6 @@ static void MX_ADC1_Init(void)
   }
 }
 
-/**
-  * @brief USART2 Initialization Function
-  * @param None
-  * @retval None
-  */
 static void MX_USART2_UART_Init(void)
 {
   huart2.Instance          = USART2;
@@ -248,11 +197,6 @@ static void MX_USART2_UART_Init(void)
   }
 }
 
-/**
-  * @brief GPIO Initialization Function
-  * @param None
-  * @retval None
-  */
 static void MX_GPIO_Init(void)
 {
   GPIO_InitTypeDef GPIO_InitStruct = {0};
@@ -265,20 +209,17 @@ static void MX_GPIO_Init(void)
   HAL_GPIO_WritePin(GPIOA, LD2_Pin|RELAY_MAIN_Pin|RELAY_GEN_Pin|RELAY_TRANSFER_Pin, GPIO_PIN_RESET);
   HAL_GPIO_WritePin(GPIOB, LED_PWR_Pin|LED_S1_Pin|LED_S2_Pin|LED_S3_Pin, GPIO_PIN_RESET);
 
-  /*Configure GPIO pin : B1_Pin */
   GPIO_InitStruct.Pin  = B1_Pin;
-  GPIO_InitStruct.Mode = GPIO_MODE_INPUT;  // polling mode, no interrupt
+  GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   HAL_GPIO_Init(B1_GPIO_Port, &GPIO_InitStruct);
 
-  /*Configure GPIO pins : LD2_Pin RELAY_MAIN_Pin RELAY_GEN_Pin RELAY_TRANSFER_Pin */
   GPIO_InitStruct.Pin   = LD2_Pin|RELAY_MAIN_Pin|RELAY_GEN_Pin|RELAY_TRANSFER_Pin;
   GPIO_InitStruct.Mode  = GPIO_MODE_OUTPUT_PP;
   GPIO_InitStruct.Pull  = GPIO_NOPULL;
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
   HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
 
-  /*Configure GPIO pins : LED_PWR_Pin LED_S1_Pin LED_S2_Pin LED_S3_Pin */
   GPIO_InitStruct.Pin   = LED_PWR_Pin|LED_S1_Pin|LED_S2_Pin|LED_S3_Pin;
   GPIO_InitStruct.Mode  = GPIO_MODE_OUTPUT_PP;
   GPIO_InitStruct.Pull  = GPIO_NOPULL;
@@ -286,10 +227,6 @@ static void MX_GPIO_Init(void)
   HAL_GPIO_Init(GPIOB, &GPIO_InitStruct);
 }
 
-/**
-  * @brief  This function is executed in case of error occurrence.
-  * @retval None
-  */
 void Error_Handler(void)
 {
   __disable_irq();
